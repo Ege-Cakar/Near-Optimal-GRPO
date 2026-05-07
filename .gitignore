@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+src/*.egg-info/
+external/infinite-tux/
+external/mario-ai-framework/
+results/checkpoints/*
+results/csv/*
+results/datasets/*
+results/figures/*
+!results/checkpoints/.gitkeep
+!results/csv/.gitkeep
+!results/datasets/.gitkeep
+!results/figures/.gitkeep
+results/run_config.yaml

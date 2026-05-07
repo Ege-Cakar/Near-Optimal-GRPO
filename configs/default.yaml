@@ -1,0 +1,104 @@
+seed: 0
+results_dir: results
+
+population:
+  betas: [0.3, 1.0]
+  q0s: [0.5, 0.2, 0.1, 0.01]
+  eps_smooths: [0.0, 1.0e-12, 1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2]
+  max_iters: 200
+  tau_min_exp: -40
+  tau_points: 80
+  quick:
+    betas: [1.0]
+    q0s: [0.2, 0.01]
+    eps_smooths: [0.0, 1.0e-8, 1.0e-4, 1.0e-2]
+    max_iters: 80
+    tau_points: 40
+
+finite_group:
+  seeds: 100
+  Gs: [8, 16, 32, 64, 256]
+  eps_smooths: [0.0, 1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2]
+  q0s: [0.5, 0.2, 0.1, 0.01]
+  beta: 1.0
+  max_iters: 200
+  quick:
+    seeds: 10
+    Gs: [8, 32, 256]
+    eps_smooths: [0.0, 1.0e-4, 1.0e-2]
+    q0s: [0.2, 0.01]
+    max_iters: 80
+
+platformer:
+  backend: libre
+  height: 12
+  length: 64
+  difficulty: 0.35
+  max_steps: 240
+  obs_h: 9
+  obs_w: 13
+  infinite_tux_dir: external/infinite-tux
+  mario_ai_dir: external/mario-ai-framework
+  java_cmd: java
+  javac_cmd: javac
+  level_type: 0
+  train_level_seed_start: 1000
+  eval_level_seed_start: 20000
+  quick:
+    length: 64
+    difficulty: 0.35
+    max_steps: 200
+
+candidate:
+  betas: [0.3, 1.0]
+  eps_smooths: [0.0, 1.0e-12, 1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2]
+  candidate_bank_sizes: [128, 512, 2048]
+  target_p0s: [0.5, 0.2, 0.1, 0.01]
+  max_iters: 120
+  level_seed: 1000
+  mutation_rates: [0.0, 0.05, 0.15, 0.35, 0.7]
+  quick:
+    betas: [1.0]
+    eps_smooths: [0.0, 1.0e-8, 1.0e-4, 1.0e-2]
+    candidate_bank_sizes: [128]
+    target_p0s: [0.2, 0.01]
+    max_iters: 60
+
+bc:
+  Ms: [0, 1000, 10000, 100000]
+  epochs: 6
+  batch_size: 256
+  lr: 1.0e-3
+  planner_horizon: 18
+  planner_beam: 24
+  eval_rollouts: 200
+  quick:
+    Ms: [0, 1000]
+    epochs: 3
+    eval_rollouts: 30
+    planner_horizon: 0
+    planner_beam: 8
+
+grpo:
+  Ms: [0, 1000, 10000, 100000]
+  eps_smooths: [0.0, 1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2]
+  Gs: [8, 16, 32, 64]
+  betas: [0.3, 1.0]
+  seeds: 3
+  iterations: 25
+  prompts: 8
+  eval_rollouts: 100
+  lr: 5.0e-4
+  update_epochs: 2
+  beta_kl: 0.02
+  max_steps: null
+  quick:
+    Ms: [0, 1000]
+    eps_smooths: [0.0, 1.0e-4]
+    Gs: [8, 32]
+    betas: [1.0]
+    seeds: 1
+    iterations: 5
+    prompts: 2
+    eval_rollouts: 10
+    update_epochs: 1

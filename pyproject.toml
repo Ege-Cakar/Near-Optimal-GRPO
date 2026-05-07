@@ -1,0 +1,22 @@
+[project]
+name = "grpo-mario-theory"
+version = "0.1.0"
+description = "Reproducible binary-reward Mirror-GRPO success-probability amplification experiments in a libre platformer."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "matplotlib>=3.8",
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "pyyaml>=6.0",
+  "scipy>=1.10",
+  "torch>=2.0",
+  "tqdm>=4.66",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
