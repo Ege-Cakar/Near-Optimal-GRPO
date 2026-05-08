@@ -19,7 +19,7 @@ All scripts also accept:
 --config configs/default.yaml --seed 0 --quick|--medium --outdir results
 ```
 
-BC, GRPO, and `run_all.py` also accept `--device cpu|mps|cuda|auto`. CPU is the default because these runs are usually environment-rollout bound; MPS is supported when PyTorch reports it as available.
+Policy-training scripts and `run_all.py` also accept `--device cpu|mps|cuda|auto`. CPU is the default because these runs are usually environment-rollout bound; MPS is supported when PyTorch reports it as available.
 
 GRPO rollout and evaluation collection can use worker processes:
 
@@ -38,7 +38,7 @@ Install the optional Gym Mario backend with:
 uv sync --extra gym-mario
 ```
 
-`--quick` is intended as a laptop smoke run. `--medium` is the default local evidence run: it keeps all main ablation axes but cuts the largest Cartesian products. `--full` uses the larger sweeps in `configs/default.yaml` and is better suited to a cluster. Long loops use progress bars for finite-group trajectories, candidate evaluation, BC checkpoints, and GRPO settings/iterations.
+`--quick` is intended as a laptop smoke run. `--medium` is the default local evidence run: it keeps all main ablation axes but cuts the largest Cartesian products. In medium/full mode, `run_all.py` trains a neural feature map first, freezes it, saves measured-`p0` linear-head warm starts, and then runs GRPO from those checkpoints. `--full` uses the larger sweeps in `configs/default.yaml` and is better suited to a cluster. Long loops use progress bars for finite-group trajectories, candidate evaluation, representation pretraining, frozen-head warm starts, and GRPO settings/iterations.
 
 ## Experiments
 
@@ -142,8 +142,8 @@ For private runs against the Mario AI Framework with Mario assets:
 
 ```bash
 uv run python scripts/run_candidate_platformer.py --quick --env-backend mario_ai_private
-uv run python scripts/run_bc_pretrain.py --quick --env-backend mario_ai_private
-uv run python scripts/run_grpo_finetune.py --quick --env-backend mario_ai_private
+uv run python scripts/run_representation_pretrain.py --medium --env-backend mario_ai_private
+uv run python scripts/run_grpo_finetune.py --medium --env-backend mario_ai_private --num-workers 4
 ```
 
 This backend expects `external/mario-ai-framework` to contain a local clone of `https://github.com/amidos2006/Mario-AI-Framework` and a JDK with `javac` available. The checkout is ignored by this repo’s `.gitignore` so it is not accidentally included in a publishable artifact.
@@ -155,7 +155,7 @@ uv sync --extra gym-mario
 uv run python -c "from grpo_mario_theory.gym_mario_env import GymSuperMarioBrosEnv; env=GymSuperMarioBrosEnv(max_steps=20); obs=env.reset(seed=0, level_seed=0); print(obs.shape); env.close()"
 ```
 
-This wrapper exposes a fixed feature map from downsampled NES frames plus compact game-state scalars, so the policy remains the same linear softmax policy `phi(x)^T Omega`. The current built-in scripted expert is only a smoke-test warm-start source and does not reliably solve original SMB random stages. For paper-quality GRPO amplification on this backend, use a warm-start checkpoint with measured held-out `p0 > 0`; otherwise the expected result is no binary-reward amplification because there are no successes in support.
+This wrapper exposes compact features from downsampled NES frames plus game-state scalars. Those features can be used directly by the raw linear baseline or as input to the learned representation `phi_psi`. The current built-in scripted expert is only a smoke-test warm-start source and does not reliably solve original SMB random stages. For paper-quality GRPO amplification on this backend, use a warm-start checkpoint with measured held-out `p0 > 0`; otherwise the expected result is no binary-reward amplification because there are no successes in support.
 
 Outputs:
 
@@ -164,11 +164,39 @@ Outputs:
 - `results/csv/candidate_platformer_weights.csv`
 - `results/figures/candidate_platformer_q_vs_iter.{png,pdf}`
 
-### 4. Behavior-Cloning Warm Start
+### 4. Representation Warm Starts
 
-Warm-start policies are trained from a simple expert in the selected platformer backend. The learned policy is a linear softmax policy with logits `phi(x)^T Omega`, where `phi(x) = [x, 1]` is the flattened observation with a constant bias feature appended. The number of behavior-cloning samples `M` is not the theory variable. The relevant theory variable is the measured initial success probability `p0`, so the BC script evaluates every checkpoint on held-out generated levels and reports measured `p0(M)`.
+The main learned-policy warm-start path first trains a small neural policy from scratch with imitation data plus optional shaped-reward pretraining. This is only to learn the feature map. It then freezes the representation `phi_psi(x)` and trains/evaluates only the final linear head `Omega`, so the GRPO policy class is
 
-Run:
+```text
+pi_Omega(a | x) = softmax(phi_psi(x)^T Omega).
+```
+
+The resulting checkpoints are selected by measured held-out success probability `p0`, not by the amount of pretraining. This is the quantity used in the theory and in the GRPO plots.
+By default, medium/full require a measured target with `p0 = 1.0`; if the warm-start stage does not reach that, it raises instead of silently launching GRPO from a zero-success checkpoint.
+
+Run the representation warm-start stage directly:
+
+```bash
+uv run python scripts/run_representation_pretrain.py --medium --env-backend mario_ai_private
+```
+
+Then run GRPO from the measured target checkpoints:
+
+```bash
+uv run python scripts/run_grpo_finetune.py --medium --env-backend mario_ai_private --num-workers 4
+```
+
+Outputs:
+
+- `results/checkpoints/representation_iter*_p*.pt`
+- `results/checkpoints/warmstart_p*.pt`
+- `results/csv/representation_pretrain_eval.csv`
+- `results/csv/warmstart_head_sweep.csv`
+- `results/csv/warmstart_targets.csv`
+- `results/figures/warmstart_p0_vs_training.{png,pdf}`
+
+The old behavior-cloning script is still available as a smoke baseline:
 
 ```bash
 uv run python scripts/run_bc_pretrain.py --quick
@@ -188,12 +216,12 @@ The GRPO fine-tuning loop samples `G` rollouts for each level prompt, uses only 
 
 This experiment is intended to demonstrate the amplification mechanism when the warm-start policy already has successful trajectories in support. It should not be read as evidence that binary GRPO solves exploration from scratch. When measured `p0` is near zero, there is little or no success signal to amplify.
 
-For the paper framing, the learned-policy experiments instantiate the tractable linear-policy regime: `phi` is fixed, only the last linear layer `Omega` is trained, and the relevant warm-start quality is measured by held-out `p0`, not by the number of pretraining samples or the backend name. The population and candidate experiments isolate the binary mirror-descent mechanism; the platformer experiments test whether the same mechanism appears when the linear policy interacts with sequential environments and finite sampled groups.
+For the paper framing, the learned-policy experiments instantiate the tractable linear-policy regime: during GRPO, `phi_psi` is fixed, only the last linear layer `Omega` is trained, and the relevant warm-start quality is measured by held-out `p0`, not by the number of pretraining samples or the backend name. The population and candidate experiments isolate the binary mirror-descent mechanism; the platformer experiments test whether the same mechanism appears when the linear policy interacts with sequential environments and finite sampled groups.
 
-Run after BC checkpoints exist:
+Run after `results/csv/warmstart_targets.csv` exists:
 
 ```bash
-uv run python scripts/run_grpo_finetune.py --quick
+uv run python scripts/run_grpo_finetune.py --medium --env-backend mario_ai_private --num-workers 4
 ```
 
 Outputs:
@@ -216,6 +244,12 @@ Medium local run:
 
 ```bash
 uv run python scripts/run_all.py --medium
+```
+
+Private Mario AI Framework medium run:
+
+```bash
+uv run python scripts/run_all.py --medium --env-backend mario_ai_private --num-workers 4
 ```
 
 Full configured run:
@@ -247,7 +281,8 @@ hitting_time_tau_1e-2, hitting_time_tau_1e-4, skipped_group_fraction
 - `finite_group_q_vs_iter`: shows how finite empirical groups depart from the population recurrence.
 - `finite_group_degenerate_fraction`: shows when all-success or all-failure groups remove reward contrast.
 - `candidate_platformer_q_vs_iter`: overlays exact candidate reweighting with the scalar recurrence.
-- `bc_warmstart_p0_vs_M`: reports measured warm-start success probability rather than assuming `M` implies `p0`.
+- `bc_warmstart_p0_vs_M`: optional raw-linear BC baseline; reports measured success probability rather than assuming `M` implies `p0`.
+- `warmstart_p0_vs_training`: reports measured checkpoints from the frozen-representation linear-head sweep.
 - `grpo_success_vs_iter_by_M`: compares amplification from different warm starts.
 - `grpo_success_vs_iter_by_eps`: compares unsmoothed/tiny-smoothed behavior to fixed smoothing.
 - `grpo_group_size_effect`: compares finite group sizes and skipped/noisy group effects.

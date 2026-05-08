@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 
 from .envs import make_env
-from .policy import LinearPolicy, clone_policy, evaluate_policy, load_policy, rollout_policy, save_policy
+from .policy import clone_policy, evaluate_policy, load_policy, policy_from_payload, policy_payload, rollout_policy, save_policy
 from .utils import binomial_ci, seed_all
 
 
@@ -33,8 +33,8 @@ def collect_grpo_batch(
     if close:
         close()
     if num_workers > 1:
-        state = _policy_state_cpu(policy)
-        tasks = [(env_kwargs, obs_dim, state, level_seed_start + i, seed + 10_000 * i, G) for i in range(prompts)]
+        payload = policy_payload(policy)
+        tasks = [(env_kwargs, payload, level_seed_start + i, seed + 10_000 * i, G) for i in range(prompts)]
         with mp.get_context("spawn").Pool(processes=min(int(num_workers), len(tasks))) as pool:
             grouped_trajs = pool.map(_rollout_prompt_worker, tasks)
     else:
@@ -84,9 +84,9 @@ def collect_grpo_batch(
 def evaluate_policy_grpo(env_kwargs: dict, policy, level_seed_start: int, n_rollouts: int, seed: int, device: str, num_workers: int) -> dict:
     if num_workers <= 1:
         return evaluate_policy(env_kwargs, policy, level_seed_start, n_rollouts, seed, False, device)[0]
-    state = _policy_state_cpu(policy)
+    payload = policy_payload(policy)
     chunks = _chunks(n_rollouts, int(num_workers))
-    tasks = [(env_kwargs, policy.obs_dim, state, level_seed_start, start, count, seed) for start, count in chunks]
+    tasks = [(env_kwargs, payload, level_seed_start, start, count, seed) for start, count in chunks]
     with mp.get_context("spawn").Pool(processes=min(int(num_workers), len(tasks))) as pool:
         rows = [r for chunk in pool.map(_eval_chunk_worker, tasks) for r in chunk]
     s = np.array([r["success"] for r in rows], dtype=float)
@@ -100,20 +100,10 @@ def evaluate_policy_grpo(env_kwargs: dict, policy, level_seed_start: int, n_roll
     }
 
 
-def _policy_state_cpu(policy) -> dict[str, torch.Tensor]:
-    return {k: v.detach().cpu() for k, v in policy.state_dict().items()}
-
-
-def _make_worker_policy(obs_dim: int, state: dict[str, torch.Tensor]) -> LinearPolicy:
-    policy = LinearPolicy(obs_dim)
-    policy.load_state_dict(state)
-    return policy.eval()
-
-
 def _rollout_prompt_worker(args) -> list[dict]:
-    env_kwargs, obs_dim, state, level_seed, seed, G = args
+    env_kwargs, payload, level_seed, seed, G = args
     env = make_env(env_kwargs)
-    policy = _make_worker_policy(obs_dim, state)
+    policy = policy_from_payload(payload).eval()
     try:
         trajs = []
         for g in range(G):
@@ -128,9 +118,9 @@ def _rollout_prompt_worker(args) -> list[dict]:
 
 
 def _eval_chunk_worker(args) -> list[dict]:
-    env_kwargs, obs_dim, state, level_seed_start, start, count, seed = args
+    env_kwargs, payload, level_seed_start, start, count, seed = args
     env = make_env(env_kwargs)
-    policy = _make_worker_policy(obs_dim, state)
+    policy = policy_from_payload(payload).eval()
     try:
         rows = []
         for i in range(start, start + count):
@@ -168,7 +158,10 @@ def update_policy_grpo(
         torch.as_tensor(batch["adv"], dtype=torch.float32),
     )
     loader = DataLoader(ds, batch_size=batch_size, shuffle=True)
-    opt = torch.optim.Adam(policy.parameters(), lr=lr)
+    params = [p for p in policy.parameters() if p.requires_grad]
+    if not params:
+        return []
+    opt = torch.optim.Adam(params, lr=lr)
     old_policy.eval()
     losses = []
     for _ in range(update_epochs):
@@ -209,7 +202,7 @@ def run_grpo_setting(
     show_progress: bool = True,
 ) -> pd.DataFrame:
     seed_all(seed)
-    policy = load_policy(checkpoint_path, device)
+    policy = load_policy(checkpoint_path, device, freeze_backbone=True)
     rows = []
     last_stats = {"skipped_group_fraction": 0.0, "skipped_groups": 0, "total_groups": 0, "batch_success_rate": np.nan, "train_steps": 0}
     desc = f"GRPO {warmstart_label} eps={eps_smooth:g} G={G} beta={beta:g} seed={seed}"

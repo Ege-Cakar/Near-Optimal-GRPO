@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -205,6 +206,7 @@ def run_sanity_checks() -> None:
     from .bc_pretrain import tiny_bc_loss_check
     from .candidate_experiment import candidate_matches_scalar_check
     from .libre_platformer import LibrePlatformer
+    from .policy import NeuralFeaturePolicy, load_policy, save_policy
     from .recurrence import population_recurrence
 
     df = population_recurrence(beta=1.0, q0=0.2, eps_smooth=0.0, max_iters=8)
@@ -215,4 +217,9 @@ def run_sanity_checks() -> None:
     obs = env.reset(seed=0, level_seed=1)
     obs2, reward, done, info = env.step(1)
     assert obs.shape == obs2.shape and reward in (0.0, 1.0) and isinstance(done, bool) and "distance" in info
+    p = NeuralFeaturePolicy(obs.shape[0], feature_dim=8, hidden_dim=16)
+    tmp = Path(tempfile.gettempdir()) / "grpo_neural_feature_policy_sanity.pt"
+    save_policy(p, tmp)
+    q = load_policy(tmp, freeze_backbone=True)
+    assert any(v.requires_grad for v in q.head.parameters()) and not any(v.requires_grad for v in q.backbone.parameters())
     assert tiny_bc_loss_check()

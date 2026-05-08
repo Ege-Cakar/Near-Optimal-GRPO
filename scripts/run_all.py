@@ -13,6 +13,7 @@ import run_candidate_platformer
 import run_finite_group_recurrence
 import run_grpo_finetune
 import run_population_recurrence
+import run_representation_pretrain
 import run_warmstart_train
 
 
@@ -32,11 +33,17 @@ def run(config: str, seed: int, profile: bool | str, outdir: str, device: str = 
     run_finite_group_recurrence.run(config, seed, profile, outdir)
     print("Running candidate platformer")
     run_candidate_platformer.run(config, seed, profile, outdir, env_backend)
-    print("Running behavior cloning warm-start")
-    run_bc_pretrain.run(config, seed, profile, outdir, device, env_backend)
-    if section(cfg, "warmstart", profile).get("enabled", True):
+    rep_enabled = section(cfg, "representation", profile).get("enabled", True)
+    warm_enabled = section(cfg, "warmstart", profile).get("enabled", True)
+    if rep_enabled:
+        print("Training neural representation and measured-p0 linear heads")
+        run_representation_pretrain.run(config, seed, profile, outdir, device, env_backend)
+    elif warm_enabled:
         print("Training measured-p0 warm-start checkpoints")
         run_warmstart_train.run(config, seed, profile, outdir, device, env_backend)
+    else:
+        print("Running behavior cloning warm-start")
+        run_bc_pretrain.run(config, seed, profile, outdir, device, env_backend)
     print("Running binary Mirror-GRPO fine-tuning")
     run_grpo_finetune.run(config, seed, profile, outdir, device, env_backend, num_workers)
     summary = final_summary(paths["csv"])

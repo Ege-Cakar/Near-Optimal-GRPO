@@ -114,6 +114,120 @@ bc:
     planner_beam: 16
     max_expert_attempts: 2000
 
+representation:
+  enabled: true
+  target_p0s: [0.0, 0.25, 0.5, 0.75, 1.0]
+  require_target_p0: 1.0
+  train_levels: 128
+  eval_levels: 80
+  max_scan: 1000
+  iterations: 120
+  rollouts_per_iter: 64
+  epochs_per_iter: 3
+  batch_size: 512
+  lr: 2.0e-3
+  planner_horizon: 18
+  planner_beam: 24
+  rollin_expert_start: 0.75
+  rollin_expert_end: 0.0
+  max_dataset: 250000
+  feature_dim: 128
+  hidden_dim: 256
+  rl_rollouts_per_iter: 64
+  rl_updates_per_iter: 2
+  rl_lr: 1.0e-3
+  rl_gamma: 0.99
+  entropy_coef: 0.01
+  head_epochs: 40
+  head_eval_every: 2
+  logit_scales: [1.0, 2.0, 4.0, 8.0, 16.0]
+  quick:
+    enabled: false
+    require_target_p0: null
+    train_levels: 4
+    eval_levels: 4
+    max_scan: 120
+    iterations: 8
+    rollouts_per_iter: 8
+    epochs_per_iter: 2
+    planner_horizon: 8
+    planner_beam: 8
+    max_dataset: 50000
+    feature_dim: 64
+    hidden_dim: 128
+    rl_rollouts_per_iter: 4
+    rl_updates_per_iter: 1
+    head_epochs: 6
+    head_eval_every: 1
+    logit_scales: [1.0, 4.0]
+  medium:
+    require_target_p0: 1.0
+    train_levels: 48
+    eval_levels: 20
+    max_scan: 400
+    iterations: 60
+    rollouts_per_iter: 32
+    epochs_per_iter: 3
+    planner_horizon: 12
+    planner_beam: 16
+    max_dataset: 150000
+    rl_rollouts_per_iter: 32
+    rl_updates_per_iter: 2
+    head_epochs: 24
+    head_eval_every: 2
+    logit_scales: [1.0, 2.0, 4.0, 8.0, 16.0]
+
+warmstart:
+  enabled: false
+  target_p0s: [0.0, 0.25, 0.5, 0.75, 1.0]
+  require_target_p0: 1.0
+  train_levels: 128
+  eval_levels: 80
+  max_scan: 1000
+  iterations: 80
+  rollouts_per_iter: 48
+  epochs_per_iter: 3
+  batch_size: 512
+  lr: 2.0e-3
+  planner_horizon: 18
+  planner_beam: 24
+  rollin_expert_start: 0.75
+  rollin_expert_end: 0.0
+  logit_scales: [1.0, 2.0, 4.0, 8.0, 16.0]
+  max_dataset: 250000
+  rl_rollouts_per_iter: 64
+  rl_updates_per_iter: 2
+  rl_lr: 1.0e-3
+  rl_gamma: 0.99
+  entropy_coef: 0.01
+  quick:
+    enabled: false
+    require_target_p0: null
+    train_levels: 4
+    eval_levels: 4
+    max_scan: 120
+    iterations: 8
+    rollouts_per_iter: 8
+    epochs_per_iter: 2
+    planner_horizon: 8
+    planner_beam: 8
+    max_dataset: 50000
+    rl_rollouts_per_iter: 4
+    rl_updates_per_iter: 1
+  medium:
+    require_target_p0: 1.0
+    train_levels: 48
+    eval_levels: 20
+    max_scan: 400
+    iterations: 40
+    rollouts_per_iter: 24
+    epochs_per_iter: 3
+    planner_horizon: 12
+    planner_beam: 16
+    max_dataset: 150000
+    rl_rollouts_per_iter: 32
+    rl_updates_per_iter: 2
+
 grpo:
   Ms: [0, 1000, 10000, 100000]
   eps_smooths: [0.0, 1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2]
@@ -127,6 +241,7 @@ grpo:
   update_epochs: 2
   beta_kl: 0.02
   num_workers: 1
+  use_warmstart_targets: true
   max_steps: null
   quick:
     Ms: [0, 1000]
@@ -138,6 +253,7 @@ grpo:
     prompts: 2
     eval_rollouts: 10
     update_epochs: 1
+    use_warmstart_targets: false
   medium:
     Ms: [0, 1000, 10000]
     eps_smooths: [0.0, 1.0e-8, 1.0e-4, 1.0e-2]

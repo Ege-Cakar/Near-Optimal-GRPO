@@ -23,6 +23,8 @@ def run(config: str, seed: int, profile: bool | str, outdir: str, device: str = 
     s = section(cfg, "grpo", profile)
     psec = section(cfg, "platformer", profile)
     specs = load_warmstart_specs(paths["csv"] / "warmstart_targets.csv") if s.get("use_warmstart_targets", False) else []
+    if s.get("use_warmstart_targets", False) and not specs:
+        raise FileNotFoundError("Missing measured warm-start targets; run scripts/run_representation_pretrain.py first.")
     df = run_grpo_suite(
         platformer_kwargs(cfg, profile),
         paths["checkpoints"],
