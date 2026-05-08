@@ -27,14 +27,17 @@ def collect_expert_dataset(
     """Collect M state-action pairs from the beam-search expert, with npz caching."""
     dataset_dir = Path(dataset_dir)
     dataset_dir.mkdir(parents=True, exist_ok=True)
-    tag = f"{env_kwargs.get('backend', 'libre')}_M{M}_seed{seed}_L{env_kwargs['length']}_D{int(1000 * env_kwargs['difficulty'])}"
+    env = make_env(env_kwargs)
+    tag = f"{env_kwargs.get('backend', 'libre')}_M{M}_seed{seed}_L{env_kwargs['length']}_D{int(1000 * env_kwargs['difficulty'])}_O{env.obs_dim}"
     path = dataset_dir / f"expert_{tag}.npz"
     traj_path = dataset_dir / f"expert_traj_{tag}.csv"
     if path.exists():
         data = np.load(path)
         traj = pd.read_csv(traj_path) if traj_path.exists() else pd.DataFrame()
+        close = getattr(env, "close", None)
+        if close:
+            close()
         return data["obs"], data["actions"], traj
-    env = make_env(env_kwargs)
     if M == 0:
         obs = np.empty((0, env.obs_dim), dtype=np.float32)
         actions = np.empty((0,), dtype=np.int64)

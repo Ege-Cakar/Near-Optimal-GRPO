@@ -189,6 +189,8 @@ def run_grpo_setting(
     env_kwargs: dict,
     checkpoint_path: str | Path,
     M: int,
+    warmstart_label: str,
+    warmstart_p0: float,
     eps_smooth: float,
     G: int,
     beta: float,
@@ -210,13 +212,15 @@ def run_grpo_setting(
     policy = load_policy(checkpoint_path, device)
     rows = []
     last_stats = {"skipped_group_fraction": 0.0, "skipped_groups": 0, "total_groups": 0, "batch_success_rate": np.nan, "train_steps": 0}
-    desc = f"GRPO M={M} eps={eps_smooth:g} G={G} beta={beta:g} seed={seed}"
+    desc = f"GRPO {warmstart_label} eps={eps_smooth:g} G={G} beta={beta:g} seed={seed}"
     for it in tqdm(range(iterations + 1), desc=desc, leave=False, disable=not show_progress):
         metrics = evaluate_policy_grpo(env_kwargs, policy, eval_level_seed_start, eval_rollouts, seed + 1000 * it, device, num_workers)
         ci_low, ci_high = binomial_ci(metrics["success_rate"], eval_rollouts)
         rows.append(
             {
                 "M": M,
+                "warmstart": warmstart_label,
+                "warmstart_p0": warmstart_p0,
                 "eps_smooth": eps_smooth,
                 "G": G,
                 "beta": beta,
@@ -240,7 +244,7 @@ def run_grpo_setting(
         )
         update_policy_grpo(policy, old_policy, batch, lr, update_epochs, beta_kl, device=device)
     tag = f"M{M}_eps{eps_smooth:g}_G{G}_beta{beta:g}_seed{seed}"
-    save_policy(policy, Path(checkpoint_dir) / f"grpo_{tag}_final.pt", {"M": M, "eps_smooth": eps_smooth, "G": G, "beta": beta, "seed": seed})
+    save_policy(policy, Path(checkpoint_dir) / f"grpo_{tag}_final.pt", {"M": M, "warmstart": warmstart_label, "warmstart_p0": warmstart_p0, "eps_smooth": eps_smooth, "G": G, "beta": beta, "seed": seed})
     return pd.DataFrame(rows)
 
 
@@ -265,19 +269,24 @@ def run_grpo_suite(
     device: str = "cpu",
     num_workers: int = 1,
     show_progress: bool = True,
+    checkpoint_specs: list[dict] | None = None,
 ) -> pd.DataFrame:
     frames = []
-    settings = [(M, eps, G, beta, s) for M in Ms for eps in eps_smooths for G in Gs for beta in betas for s in range(seeds)]
-    for M, eps, G, beta, s in tqdm(settings, desc="GRPO settings", disable=not show_progress):
-        ckpt = Path(checkpoint_dir) / f"bc_M{M}.pt"
+    specs = checkpoint_specs or [{"M": int(M), "label": f"M{M}", "achieved_p0": np.nan, "checkpoint_path": str(Path(checkpoint_dir) / f"bc_M{M}.pt")} for M in Ms]
+    settings = [(spec, eps, G, beta, s) for spec in specs for eps in eps_smooths for G in Gs for beta in betas for s in range(seeds)]
+    for spec, eps, G, beta, s in tqdm(settings, desc="GRPO settings", disable=not show_progress):
+        ckpt = Path(spec["checkpoint_path"])
+        M = int(spec.get("M", round(1000 * float(spec.get("target_p0", spec.get("achieved_p0", 0.0))))))
         if not ckpt.exists():
-            raise FileNotFoundError(f"Missing {ckpt}; run behavior cloning first.")
+            raise FileNotFoundError(f"Missing {ckpt}; run warm-start training or behavior cloning first.")
         run_seed = base_seed + 10_000 * s
         frames.append(
             run_grpo_setting(
                 env_kwargs,
                 ckpt,
                 M,
+                str(spec.get("label", f"M{M}")),
+                float(spec.get("achieved_p0", np.nan)),
                 float(eps),
                 int(G),
                 float(beta),

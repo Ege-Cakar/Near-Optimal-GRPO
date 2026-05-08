@@ -40,9 +40,10 @@ class MarioAIPrivateEnv(InfiniteTuxEnv):
         diff = max(0, min(10, int(round(self.difficulty * 10))))
         self.proc.stdin.write(f"RESET {level_seed} {diff} {self.max_steps} {self.obs_h} {self.obs_w} {self.length} {self.mario_ai_level_set}\n")
         self.proc.stdin.flush()
+        self.prev_action, self.jump_hold, self.speed_hold = -1, 0, 0
         obs, _reward, _done, info = self._read_obs()
-        self.last_obs, self.last_info = obs, info
-        return obs
+        self.last_obs, self.last_info = self._augment_obs(obs, info), info
+        return self.last_obs
 
     def _ensure_proc(self) -> None:
         if self.proc and self.proc.poll() is None:

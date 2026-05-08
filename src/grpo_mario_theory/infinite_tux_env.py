@@ -6,6 +6,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .libre_platformer import N_ACTIONS
+
 
 class InfiniteTuxEnv:
     """Headless Python wrapper for the libre Infinite Tux Java environment."""
@@ -30,10 +32,15 @@ class InfiniteTuxEnv:
         self.proc: subprocess.Popen[str] | None = None
         self.last_obs: np.ndarray | None = None
         self.last_info: dict = {}
+        self.prev_action, self.jump_hold, self.speed_hold = -1, 0, 0
+
+    @property
+    def base_obs_dim(self) -> int:
+        return 4 * self.obs_h * self.obs_w + 4
 
     @property
     def obs_dim(self) -> int:
-        return 4 * self.obs_h * self.obs_w + 4
+        return self.base_obs_dim + N_ACTIONS + 10
 
     def reset(self, seed: int | None = None, level_seed: int | None = None, checkpoint=None) -> np.ndarray:
         if checkpoint is not None:
@@ -44,9 +51,10 @@ class InfiniteTuxEnv:
         diff = max(0, min(10, int(round(self.difficulty * 10))))
         self.proc.stdin.write(f"RESET {level_seed} {diff} {self.level_type} {self.max_steps} {self.obs_h} {self.obs_w} {self.length}\n")
         self.proc.stdin.flush()
+        self.prev_action, self.jump_hold, self.speed_hold = -1, 0, 0
         obs, _reward, _done, info = self._read_obs()
-        self.last_obs, self.last_info = obs, info
-        return obs
+        self.last_obs, self.last_info = self._augment_obs(obs, info), info
+        return self.last_obs
 
     def step(self, action: int) -> tuple[np.ndarray, float, bool, dict]:
         self._ensure_proc()
@@ -54,8 +62,9 @@ class InfiniteTuxEnv:
         self.proc.stdin.write(f"STEP {int(action)}\n")
         self.proc.stdin.flush()
         obs, reward, done, info = self._read_obs()
-        self.last_obs, self.last_info = obs, info
-        return obs, reward, done, info
+        self._record_action(int(action))
+        self.last_obs, self.last_info = self._augment_obs(obs, info), info
+        return self.last_obs, reward, done, info
 
     def close(self) -> None:
         if self.proc is None:
@@ -107,8 +116,8 @@ class InfiniteTuxEnv:
         success, death, timeout = bool(int(parts[3])), bool(int(parts[4])), bool(int(parts[5]))
         distance, elapsed, time_to_goal = float(parts[6]), int(parts[7]), int(parts[8])
         obs = np.fromstring(parts[9], sep=",", dtype=np.float32)
-        if obs.shape != (self.obs_dim,):
-            raise RuntimeError(f"Expected obs_dim={self.obs_dim}, got {obs.shape}")
+        if obs.shape != (self.base_obs_dim,):
+            raise RuntimeError(f"Expected base_obs_dim={self.base_obs_dim}, got {obs.shape}")
         info = {
             "success": success,
             "death": death,
@@ -118,6 +127,42 @@ class InfiniteTuxEnv:
             "elapsed": elapsed,
         }
         return obs, reward, done, info
+
+    def _record_action(self, action: int) -> None:
+        self.prev_action = action
+        self.jump_hold = self.jump_hold + 1 if action in (2, 4, 6) else 0
+        self.speed_hold = self.speed_hold + 1 if action in (3, 4) else 0
+
+    def _augment_obs(self, obs: np.ndarray, info: dict) -> np.ndarray:
+        hist = np.zeros(N_ACTIONS + 10, dtype=np.float32)
+        if 0 <= self.prev_action < N_ACTIONS:
+            hist[self.prev_action] = 1.0
+        hist[N_ACTIONS] = min(1.0, self.jump_hold / 12.0)
+        hist[N_ACTIONS + 1] = min(1.0, self.speed_hold / 12.0)
+        hist[N_ACTIONS + 2 :] = self._lookahead_features(obs, info)
+        return np.concatenate([obs.astype(np.float32), hist])
+
+    def _lookahead_features(self, obs: np.ndarray, info: dict) -> np.ndarray:
+        grid = obs[: 4 * self.obs_h * self.obs_w].reshape(4, self.obs_h, self.obs_w)
+        ax = self.obs_w // 3
+        ahead = slice(min(self.obs_w, ax + 1), min(self.obs_w, ax + 6))
+        close = slice(min(self.obs_w, ax + 1), min(self.obs_w, ax + 3))
+        floor_row = min(self.obs_h - 1, self.obs_h // 2 + 3)
+        body = slice(max(0, self.obs_h // 2 - 2), min(self.obs_h, self.obs_h // 2 + 3))
+        floor = float(grid[1, floor_row, ahead].mean()) if ahead.start < ahead.stop else 0.0
+        return np.array(
+            [
+                min(1.0, float(info["distance"]) / max(1.0, self.length)),
+                float(grid[1, body, ahead].max()),
+                float(grid[2, :, ahead].max()),
+                float(grid[3, :, ahead].max()),
+                floor,
+                1.0 - floor,
+                float(grid[1, body, close].max()),
+                float(grid[2, :, close].max()),
+            ],
+            dtype=np.float32,
+        )
 
 
 def build_infinite_tux(root: Path, javac_cmd: str = "javac") -> Path:

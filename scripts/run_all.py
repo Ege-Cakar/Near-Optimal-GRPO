@@ -6,13 +6,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from grpo_mario_theory.utils import ensure_results, final_summary, load_config, resolve_profile, run_sanity_checks, save_run_config
+from grpo_mario_theory.utils import ensure_results, final_summary, load_config, resolve_profile, run_sanity_checks, save_run_config, section
 
 import run_bc_pretrain
 import run_candidate_platformer
 import run_finite_group_recurrence
 import run_grpo_finetune
 import run_population_recurrence
+import run_warmstart_train
 
 
 def run(config: str, seed: int, profile: bool | str, outdir: str, device: str = "cpu", env_backend: str | None = None, num_workers: int | None = None):
@@ -33,6 +34,9 @@ def run(config: str, seed: int, profile: bool | str, outdir: str, device: str = 
     run_candidate_platformer.run(config, seed, profile, outdir, env_backend)
     print("Running behavior cloning warm-start")
     run_bc_pretrain.run(config, seed, profile, outdir, device, env_backend)
+    if section(cfg, "warmstart", profile).get("enabled", True):
+        print("Training measured-p0 warm-start checkpoints")
+        run_warmstart_train.run(config, seed, profile, outdir, device, env_backend)
     print("Running binary Mirror-GRPO fine-tuning")
     run_grpo_finetune.run(config, seed, profile, outdir, device, env_backend, num_workers)
     summary = final_summary(paths["csv"])

@@ -140,27 +140,42 @@ def plot_bc(eval_df: pd.DataFrame, fig_dir: str | Path) -> None:
     plt.close(fig)
 
 
+def plot_warmstart(hist: pd.DataFrame, fig_dir: str | Path) -> None:
+    style()
+    if hist.empty:
+        return
+    fig, ax = plt.subplots(figsize=(5.5, 3.6))
+    ax.plot(hist["iteration"], hist["p0"], marker="o", ms=2.5)
+    ax.set_xlabel("warm-start training iteration")
+    ax.set_ylabel("measured held-out p0")
+    ax.set_ylim(-0.02, 1.02)
+    ax.set_title("Measured Warm-Start Checkpoints")
+    save_dual(fig, Path(fig_dir) / "warmstart_p0_vs_training")
+    plt.close(fig)
+
+
 def plot_grpo(df: pd.DataFrame, fig_dir: str | Path) -> None:
     style()
     if df.empty:
         return
     fig_dir = Path(fig_dir)
+    warm_key = "warmstart_p0" if "warmstart_p0" in df else "M"
     _plot_grpo_family(
         _filter_preferred(df, eps_smooth=1e-4, G=max(df["G"]), beta=1.0),
-        "M",
+        warm_key,
         "grpo_success_vs_iter_by_M",
-        "GRPO by Warm Start",
+        "GRPO by Measured Warm Start",
         fig_dir,
     )
     _plot_grpo_family(
-        _filter_preferred(df, M=max(df["M"]), G=max(df["G"]), beta=1.0),
+        _filter_preferred(df, **({warm_key: max(df[warm_key])} if warm_key in df else {"M": max(df["M"])}), G=max(df["G"]), beta=1.0),
         "eps_smooth",
         "grpo_success_vs_iter_by_eps",
         "GRPO by Smoothing",
         fig_dir,
     )
     _plot_grpo_family(
-        _filter_preferred(df, M=max(df["M"]), eps_smooth=1e-4, beta=1.0),
+        _filter_preferred(df, **({warm_key: max(df[warm_key])} if warm_key in df else {"M": max(df["M"])}), eps_smooth=1e-4, beta=1.0),
         "G",
         "grpo_group_size_effect",
         "GRPO by Group Size",

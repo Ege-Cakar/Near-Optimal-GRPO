@@ -163,8 +163,10 @@ def final_summary(csv_dir: str | Path) -> pd.DataFrame:
     grpo = csv_dir / "grpo_eval.csv"
     if grpo.exists():
         df = pd.read_csv(grpo)
-        for keys, g in df.groupby(["M", "eps_smooth", "G", "beta", "seed"], sort=False):
-            rows.append(_summary_row("grpo", _setting(("M", "eps", "G", "beta", "seed"), keys), g, "iteration", g["skipped_group_fraction"].mean()))
+        cols = ["warmstart_p0", "eps_smooth", "G", "beta", "seed"] if "warmstart_p0" in df else ["M", "eps_smooth", "G", "beta", "seed"]
+        names = ("p0", "eps", "G", "beta", "seed") if "warmstart_p0" in df else ("M", "eps", "G", "beta", "seed")
+        for keys, g in df.groupby(cols, sort=False):
+            rows.append(_summary_row("grpo", _setting(names, keys), g, "iteration", g["skipped_group_fraction"].mean()))
 
     out = pd.DataFrame(rows)
     if not out.empty:
