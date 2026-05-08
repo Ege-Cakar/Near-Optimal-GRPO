@@ -9,20 +9,36 @@ The default platformer path uses `LibrePlatformer`, a self-contained generated t
 ```bash
 uv sync
 uv run python scripts/run_all.py --quick
+uv run python scripts/run_all.py --medium
 uv run python scripts/run_all.py --full
 ```
 
 All scripts also accept:
 
 ```bash
---config configs/default.yaml --seed 0 --quick --outdir results
+--config configs/default.yaml --seed 0 --quick|--medium --outdir results
 ```
 
 BC, GRPO, and `run_all.py` also accept `--device cpu|mps|cuda|auto`. CPU is the default because these runs are usually environment-rollout bound; MPS is supported when PyTorch reports it as available.
 
-Platformer scripts accept `--env-backend libre|infinite_tux|mario_ai_private`. The Infinite Tux backend requires a JDK with `javac` on `PATH`; it compiles the patched headless bridge into `external/infinite-tux/build/classes` on first use. The `mario_ai_private` backend targets the research Mario AI Framework checkout in `external/mario-ai-framework`; it is for private/non-published runs only because that framework states that it uses original Mario art and includes original SMB level files.
+GRPO rollout and evaluation collection can use worker processes:
 
-`--quick` is intended as a laptop smoke run. `--full` uses the larger sweeps in `configs/default.yaml` and is better suited to a cluster.
+```bash
+uv run python scripts/run_grpo_finetune.py --quick --num-workers 4
+uv run python scripts/run_all.py --quick --num-workers 4
+```
+
+Workers each create their own environment instance. This helps most for slow Java/NES rollout backends; use CPU for worker inference.
+
+Platformer scripts accept `--env-backend libre|infinite_tux|mario_ai_private|gym_super_mario_bros`. The Infinite Tux backend requires a JDK with `javac` on `PATH`; it compiles the patched headless bridge into `external/infinite-tux/build/classes` on first use. The `mario_ai_private` backend targets the research Mario AI Framework checkout in `external/mario-ai-framework`; it is for private/non-published runs only because that framework states that it uses original Mario art and includes original SMB level files. The `gym_super_mario_bros` backend is also private/non-published: it uses `gym-super-mario-bros==7.4.0`, `nes-py==8.2.1`, `gym==0.25.2`, and the `SuperMarioBrosRandomStages-v0` NES-ROM environment.
+
+Install the optional Gym Mario backend with:
+
+```bash
+uv sync --extra gym-mario
+```
+
+`--quick` is intended as a laptop smoke run. `--medium` is the default local evidence run: it keeps all main ablation axes but cuts the largest Cartesian products. `--full` uses the larger sweeps in `configs/default.yaml` and is better suited to a cluster. Long loops use progress bars for finite-group trajectories, candidate evaluation, BC checkpoints, and GRPO settings/iterations.
 
 ## Experiments
 
@@ -132,6 +148,15 @@ uv run python scripts/run_grpo_finetune.py --quick --env-backend mario_ai_privat
 
 This backend expects `external/mario-ai-framework` to contain a local clone of `https://github.com/amidos2006/Mario-AI-Framework` and a JDK with `javac` available. The checkout is ignored by this repo’s `.gitignore` so it is not accidentally included in a publishable artifact.
 
+For private runs against the Kautenja Gym/NES backend:
+
+```bash
+uv sync --extra gym-mario
+uv run python -c "from grpo_mario_theory.gym_mario_env import GymSuperMarioBrosEnv; env=GymSuperMarioBrosEnv(max_steps=20); obs=env.reset(seed=0, level_seed=0); print(obs.shape); env.close()"
+```
+
+This wrapper exposes a fixed feature map from downsampled NES frames plus compact game-state scalars, so the policy remains the same linear softmax policy `phi(x)^T Omega`. The current built-in scripted expert is only a smoke-test warm-start source and does not reliably solve original SMB random stages. For paper-quality GRPO amplification on this backend, use a warm-start checkpoint with measured held-out `p0 > 0`; otherwise the expected result is no binary-reward amplification because there are no successes in support.
+
 Outputs:
 
 - `results/csv/candidate_bank_K*.csv`
@@ -163,6 +188,8 @@ The GRPO fine-tuning loop samples `G` rollouts for each level prompt, uses only 
 
 This experiment is intended to demonstrate the amplification mechanism when the warm-start policy already has successful trajectories in support. It should not be read as evidence that binary GRPO solves exploration from scratch. When measured `p0` is near zero, there is little or no success signal to amplify.
 
+For the paper framing, the learned-policy experiments instantiate the tractable linear-policy regime: `phi` is fixed, only the last linear layer `Omega` is trained, and the relevant warm-start quality is measured by held-out `p0`, not by the number of pretraining samples or the backend name. The population and candidate experiments isolate the binary mirror-descent mechanism; the platformer experiments test whether the same mechanism appears when the linear policy interacts with sequential environments and finite sampled groups.
+
 Run after BC checkpoints exist:
 
 ```bash
@@ -183,6 +210,12 @@ Small end-to-end run:
 
 ```bash
 uv run python scripts/run_all.py --quick
+```
+
+Medium local run:
+
+```bash
+uv run python scripts/run_all.py --medium
 ```
 
 Full configured run:

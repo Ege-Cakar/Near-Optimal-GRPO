@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from .utils import logit_from_q, stable_sigmoid_pair
 
@@ -57,12 +58,10 @@ def run_finite_group_grid(
 ) -> pd.DataFrame:
     frames = []
     run_id = 0
-    for G in Gs:
-        for eps in eps_smooths:
-            for q0 in q0s:
-                for s in range(seeds):
-                    frames.append(finite_group_trajectory(base_seed + run_id, int(G), float(eps), beta, float(q0), max_iters))
-                    run_id += 1
+    settings = [(G, eps, q0, s) for G in Gs for eps in eps_smooths for q0 in q0s for s in range(seeds)]
+    for G, eps, q0, _ in tqdm(settings, desc="finite-group trajectories"):
+        frames.append(finite_group_trajectory(base_seed + run_id, int(G), float(eps), beta, float(q0), max_iters))
+        run_id += 1
     return pd.concat(frames, ignore_index=True)
 
 

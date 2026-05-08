@@ -1,12 +1,18 @@
 package grpo;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Locale;
-import java.util.Random;
 
-import engine.core.MarioLevelModel;
+import engine.core.MarioAgent;
+import engine.core.MarioForwardModel;
+import engine.core.MarioGame;
+import engine.core.MarioTimer;
 import engine.core.MarioWorld;
 import engine.helper.GameStatus;
 import engine.helper.MarioActions;
@@ -17,6 +23,7 @@ import engine.core.MarioSprite;
 public class HeadlessServer {
     private static final int EMPTY = 0, SOLID = 1, HAZARD = 2, GOAL = 3;
     private MarioWorld world;
+    private MarioAgent expert;
     private int elapsed, maxSteps, obsH, obsW;
 
     public static void main(String[] args) throws Exception {
@@ -34,6 +41,7 @@ public class HeadlessServer {
                 if (p[0].equals("CLOSE")) break;
                 if (p[0].equals("RESET")) reset(p);
                 else if (p[0].equals("STEP")) step(Integer.parseInt(p[1]));
+                else if (p[0].equals("EXPERT")) expert();
                 else System.out.println("ERR unknown_command");
             } catch (Throwable t) {
                 System.out.println("ERR " + t.getClass().getSimpleName() + ":" + t.getMessage());
@@ -42,15 +50,14 @@ public class HeadlessServer {
         }
     }
 
-    private void reset(String[] p) {
+    private void reset(String[] p) throws IOException {
         long seed = Long.parseLong(p[1]);
-        int difficulty = Integer.parseInt(p[2]);
         int maxTimerMs = 0;
         maxSteps = Integer.parseInt(p[3]);
         obsH = Integer.parseInt(p[4]);
         obsW = Integer.parseInt(p[5]);
-        int length = Math.max(64, Integer.parseInt(p[6]));
-        String level = generatedLevel(length, 16, difficulty, seed);
+        String levelSet = p.length > 7 ? p[7] : "notch";
+        String level = loadLevel(levelSet, seed);
         world = new MarioWorld(null);
         world.visuals = false;
         world.initializeLevel(level, maxTimerMs);
@@ -58,31 +65,33 @@ public class HeadlessServer {
         world.mario.isFire = false;
         elapsed = 0;
         world.update(new boolean[MarioActions.numberOfActions()]);
+        expert = new agents.robinBaumgarten.Agent();
+        expert.initialize(new MarioForwardModel(world.clone()), new MarioTimer(MarioGame.maxTime));
         emit(0.0);
     }
 
-    private String generatedLevel(int length, int height, int difficulty, long seed) {
-        MarioLevelModel model = new MarioLevelModel(length, height);
-        Random random = new Random(seed);
-        model.clearMap();
-        for (int x = 0; x < length; x++) {
-            model.setBlock(x, height - 1, MarioLevelModel.GROUND);
-            model.setBlock(x, height - 2, MarioLevelModel.GROUND);
-        }
-        for (int x = 14; x < length - 12; x += 11 + random.nextInt(6)) {
-            if (random.nextInt(10) < difficulty) {
-                model.setBlock(x + 2, height - 5, random.nextBoolean() ? MarioLevelModel.COIN_BRICK : MarioLevelModel.NORMAL_BRICK);
-            }
-        }
-        model.setBlock(1, height - 3, MarioLevelModel.MARIO_START);
-        model.setBlock(length - 2, height - 3, MarioLevelModel.MARIO_EXIT);
-        return model.getMap();
+    private String loadLevel(String levelSet, long seed) throws IOException {
+        int idx = 1 + Math.floorMod(mix(seed), 1000);
+        return new String(Files.readAllBytes(Paths.get("levels", levelSet, "lvl-" + idx + ".txt")), StandardCharsets.UTF_8);
+    }
+
+    private int mix(long x) {
+        x ^= x >>> 33;
+        x *= 0xff51afd7ed558ccdL;
+        x ^= x >>> 33;
+        x *= 0xc4ceb9fe1a85ec53L;
+        x ^= x >>> 33;
+        return (int)x;
     }
 
     private void step(int action) {
         world.update(toActions(action));
         elapsed++;
         emit(success() ? 1.0 : 0.0);
+    }
+
+    private void expert() {
+        System.out.println("ACT\t" + fromActions(expert.getActions(new MarioForwardModel(world.clone()), new MarioTimer(MarioGame.maxTime))));
     }
 
     private boolean[] toActions(int action) {
@@ -92,6 +101,20 @@ public class HeadlessServer {
         a[MarioActions.SPEED.getValue()] = action == 3 || action == 4;
         a[MarioActions.LEFT.getValue()] = action == 5;
         return a;
+    }
+
+    private int fromActions(boolean[] a) {
+        boolean right = a[MarioActions.RIGHT.getValue()];
+        boolean left = a[MarioActions.LEFT.getValue()];
+        boolean jump = a[MarioActions.JUMP.getValue()];
+        boolean speed = a[MarioActions.SPEED.getValue()];
+        if (right && jump && speed) return 4;
+        if (right && speed) return 3;
+        if (right && jump) return 2;
+        if (right) return 1;
+        if (left) return 5;
+        if (jump) return 6;
+        return 0;
     }
 
     private boolean success() {

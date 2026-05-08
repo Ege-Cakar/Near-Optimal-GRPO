@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
+
+_cache_root = Path(tempfile.gettempdir()) / "grpo_mario_theory_cache"
+_cache_root.mkdir(parents=True, exist_ok=True)
+if not os.access(os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache")), os.W_OK):
+    os.environ["XDG_CACHE_HOME"] = str(_cache_root)
+os.environ.setdefault("MPLCONFIGDIR", str(_cache_root / "matplotlib"))
 
 import matplotlib.pyplot as plt
 import numpy as np

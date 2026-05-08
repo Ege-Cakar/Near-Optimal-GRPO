@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from grpo_mario_theory.utils import ensure_results, final_summary, load_config, run_sanity_checks, save_run_config
+from grpo_mario_theory.utils import ensure_results, final_summary, load_config, resolve_profile, run_sanity_checks, save_run_config
 
 import run_bc_pretrain
 import run_candidate_platformer
@@ -15,9 +15,10 @@ import run_grpo_finetune
 import run_population_recurrence
 
 
-def run(config: str, seed: int, quick: bool, outdir: str, device: str = "cpu", env_backend: str | None = None):
+def run(config: str, seed: int, profile: bool | str, outdir: str, device: str = "cpu", env_backend: str | None = None, num_workers: int | None = None):
     cfg = load_config(config)
     cfg["seed"] = seed
+    cfg["profile"] = resolve_profile(profile)
     if env_backend:
         cfg["platformer"]["backend"] = env_backend
     paths = ensure_results(outdir)
@@ -25,15 +26,15 @@ def run(config: str, seed: int, quick: bool, outdir: str, device: str = "cpu", e
     print("Running sanity checks")
     run_sanity_checks()
     print("Running population recurrence")
-    run_population_recurrence.run(config, seed, quick, outdir)
+    run_population_recurrence.run(config, seed, profile, outdir)
     print("Running finite-group recurrence")
-    run_finite_group_recurrence.run(config, seed, quick, outdir)
+    run_finite_group_recurrence.run(config, seed, profile, outdir)
     print("Running candidate platformer")
-    run_candidate_platformer.run(config, seed, quick, outdir, env_backend)
+    run_candidate_platformer.run(config, seed, profile, outdir, env_backend)
     print("Running behavior cloning warm-start")
-    run_bc_pretrain.run(config, seed, quick, outdir, device, env_backend)
+    run_bc_pretrain.run(config, seed, profile, outdir, device, env_backend)
     print("Running binary Mirror-GRPO fine-tuning")
-    run_grpo_finetune.run(config, seed, quick, outdir, device, env_backend)
+    run_grpo_finetune.run(config, seed, profile, outdir, device, env_backend, num_workers)
     summary = final_summary(paths["csv"])
     if not summary.empty:
         print("\nFinal summary table")
@@ -48,14 +49,17 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--config", default="configs/default.yaml")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--quick", action="store_true")
+    p.add_argument("--medium", action="store_true")
     p.add_argument("--full", action="store_true")
     p.add_argument("--outdir", default="results")
     p.add_argument("--device", default="cpu", choices=["cpu", "mps", "cuda", "auto"])
-    p.add_argument("--env-backend", choices=["libre", "infinite_tux", "mario_ai_private"])
+    p.add_argument("--num-workers", type=int, default=None, help="Worker processes for GRPO rollout/evaluation collection.")
+    p.add_argument("--env-backend", choices=["libre", "infinite_tux", "mario_ai_private", "gym_super_mario_bros"])
     args = p.parse_args(argv)
-    if args.quick and args.full:
-        raise SystemExit("Use either --quick or --full, not both.")
-    run(args.config, args.seed, quick=args.quick or not args.full, outdir=args.outdir, device=args.device, env_backend=args.env_backend)
+    if sum([args.quick, args.medium, args.full]) > 1:
+        raise SystemExit("Use only one of --quick, --medium, or --full.")
+    profile = "medium" if args.medium else ("full" if args.full else "quick")
+    run(args.config, args.seed, profile, args.outdir, args.device, args.env_backend, args.num_workers)
 
 
 if __name__ == "__main__":

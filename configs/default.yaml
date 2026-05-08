@@ -14,6 +14,12 @@ population:
     eps_smooths: [0.0, 1.0e-8, 1.0e-4, 1.0e-2]
     max_iters: 80
     tau_points: 40
+  medium:
+    betas: [0.3, 1.0]
+    q0s: [0.5, 0.2, 0.01]
+    eps_smooths: [0.0, 1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2]
+    max_iters: 150
+    tau_points: 60
 
 finite_group:
   seeds: 100
@@ -28,26 +34,40 @@ finite_group:
     eps_smooths: [0.0, 1.0e-4, 1.0e-2]
     q0s: [0.2, 0.01]
     max_iters: 80
+  medium:
+    seeds: 30
+    Gs: [8, 16, 32, 64]
+    eps_smooths: [0.0, 1.0e-8, 1.0e-4, 1.0e-2]
+    q0s: [0.5, 0.2, 0.01]
+    max_iters: 120
 
 platformer:
   backend: libre
   height: 12
-  length: 64
+  length: 150
   difficulty: 0.35
-  max_steps: 240
+  max_steps: 500
   obs_h: 9
   obs_w: 13
   infinite_tux_dir: external/infinite-tux
   mario_ai_dir: external/mario-ai-framework
+  mario_ai_level_set: notch
+  gym_mario_env_id: SuperMarioBrosRandomStages-v0
+  gym_mario_stages: null
+  gym_mario_movement: SIMPLE_MOVEMENT
   java_cmd: java
   javac_cmd: javac
   level_type: 0
   train_level_seed_start: 1000
   eval_level_seed_start: 20000
   quick:
-    length: 64
+    length: 150
     difficulty: 0.35
-    max_steps: 200
+    max_steps: 300
+  medium:
+    length: 150
+    difficulty: 0.35
+    max_steps: 400
 
 candidate:
   betas: [0.3, 1.0]
@@ -63,6 +83,12 @@ candidate:
     candidate_bank_sizes: [128]
     target_p0s: [0.2, 0.01]
     max_iters: 60
+  medium:
+    betas: [0.3, 1.0]
+    eps_smooths: [0.0, 1.0e-8, 1.0e-6, 1.0e-4, 1.0e-2]
+    candidate_bank_sizes: [128, 512]
+    target_p0s: [0.2, 0.1, 0.01]
+    max_iters: 90
 
 bc:
   Ms: [0, 1000, 10000, 100000]
@@ -72,12 +98,21 @@ bc:
   planner_horizon: 18
   planner_beam: 24
   eval_rollouts: 200
+  max_expert_attempts: null
   quick:
     Ms: [0, 1000]
     epochs: 3
     eval_rollouts: 30
     planner_horizon: 0
     planner_beam: 8
+    max_expert_attempts: 20
+  medium:
+    Ms: [0, 1000, 10000]
+    epochs: 4
+    eval_rollouts: 80
+    planner_horizon: 12
+    planner_beam: 16
+    max_expert_attempts: 2000
 
 grpo:
   Ms: [0, 1000, 10000, 100000]
@@ -91,6 +126,7 @@ grpo:
   lr: 5.0e-4
   update_epochs: 2
   beta_kl: 0.02
+  num_workers: 1
   max_steps: null
   quick:
     Ms: [0, 1000]
@@ -101,4 +137,14 @@ grpo:
     iterations: 5
     prompts: 2
     eval_rollouts: 10
+    update_epochs: 1
+  medium:
+    Ms: [0, 1000, 10000]
+    eps_smooths: [0.0, 1.0e-8, 1.0e-4, 1.0e-2]
+    Gs: [16, 32]
+    betas: [0.3, 1.0]
+    seeds: 1
+    iterations: 12
+    prompts: 4
+    eval_rollouts: 40
     update_epochs: 1

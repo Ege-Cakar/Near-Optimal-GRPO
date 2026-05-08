@@ -4,6 +4,7 @@ import numpy as np
 
 from .infinite_tux_env import InfiniteTuxEnv
 from .libre_platformer import LibrePlatformer, plan_action
+from .gym_mario_env import GymSuperMarioBrosEnv
 from .mario_ai_env import MarioAIPrivateEnv
 
 
@@ -17,12 +18,16 @@ def make_env(env_kwargs: dict):
         return InfiniteTuxEnv(**kwargs)
     if backend == "mario_ai_private":
         return MarioAIPrivateEnv(**kwargs)
+    if backend == "gym_super_mario_bros":
+        return GymSuperMarioBrosEnv(**kwargs)
     raise ValueError(f"Unknown environment backend: {backend}")
 
 
 def expert_action(env, env_kwargs: dict, planner_horizon: int, planner_beam: int) -> int:
     if env_kwargs.get("backend", "libre") == "libre":
         return plan_action(env, planner_horizon, planner_beam)
+    if hasattr(env, "expert_action"):
+        return env.expert_action()
     return obs_heuristic_action(env.last_obs, env.obs_h, env.obs_w)
 
 

@@ -21,6 +21,7 @@ def collect_expert_dataset(
     dataset_dir: str | Path,
     planner_horizon: int,
     planner_beam: int,
+    max_expert_attempts: int | None = None,
     show_progress: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
     """Collect M state-action pairs from the beam-search expert, with npz caching."""
@@ -46,8 +47,9 @@ def collect_expert_dataset(
     seed_all(seed)
     obs_rows, action_rows, traj_rows = [], [], []
     pbar = tqdm(total=M, desc=f"expert M={M}", disable=not show_progress)
-    level_idx, attempts = 0, 0
-    while len(action_rows) < M and attempts < max(1000, 10 * M):
+    level_idx, attempts, successes = 0, 0, 0
+    attempt_limit = int(max_expert_attempts) if max_expert_attempts else max(1000, 10 * M)
+    while len(action_rows) < M and attempts < attempt_limit:
         level_seed = level_seed_start + level_idx
         obs = env.reset(seed=seed + level_idx, level_seed=level_seed)
         done = False
@@ -60,17 +62,22 @@ def collect_expert_dataset(
         needed = M - len(action_rows)
         added = 0
         if env.info()["success"]:
+            successes += 1
             take = min(needed, len(traj_actions))
             obs_rows.extend(traj_obs[:take])
             action_rows.extend(traj_actions[:take])
             pbar.update(take)
             added = take
         traj_rows.append({"level_seed": level_seed, "pairs": added, "used_for_bc": added > 0, "actions": " ".join(map(str, traj_actions)), **env.info()})
+        pbar.set_postfix(attempts=attempts + 1, successes=successes, pairs=len(action_rows))
         level_idx += 1
         attempts += 1
     pbar.close()
     if len(action_rows) < M:
-        raise RuntimeError(f"Only collected {len(action_rows)} successful expert pairs out of requested M={M}.")
+        raise RuntimeError(
+            f"Only collected {len(action_rows)} successful expert pairs out of requested M={M} after {attempts} episodes. "
+            "This backend needs a stronger warm-start/expert or a stage subset where the expert has nonzero success."
+        )
     obs = np.asarray(obs_rows, dtype=np.float32)
     actions = np.asarray(action_rows, dtype=np.int64)
     traj = pd.DataFrame(traj_rows)
@@ -129,6 +136,7 @@ def run_bc_suite(
     planner_horizon: int,
     planner_beam: int,
     eval_rollouts: int,
+    max_expert_attempts: int | None = None,
     show_progress: bool = True,
     device: str = "cpu",
 ) -> pd.DataFrame:
@@ -138,8 +146,8 @@ def run_bc_suite(
     close = getattr(tmp_env, "close", None)
     if close:
         close()
-    for M in Ms:
-        obs, actions, _ = collect_expert_dataset(M, env_kwargs, seed, level_seed_start, dataset_dir, planner_horizon, planner_beam, show_progress)
+    for M in tqdm(Ms, desc="BC checkpoints", disable=not show_progress):
+        obs, actions, _ = collect_expert_dataset(M, env_kwargs, seed, level_seed_start, dataset_dir, planner_horizon, planner_beam, max_expert_attempts, show_progress)
         policy, losses = train_bc_policy(obs, actions, obs_dim, epochs, batch_size, lr, seed + M, device)
         ckpt_path = Path(checkpoint_dir) / f"bc_M{M}.pt"
         save_policy(policy, ckpt_path, {"M": M, "bc_losses": losses})

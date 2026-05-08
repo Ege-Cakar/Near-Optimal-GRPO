@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from .envs import expert_action, make_env
 from .libre_platformer import N_ACTIONS
@@ -56,6 +57,13 @@ def generate_candidate_bank(
     expert = expert_sequence(env_kwargs, level_seed, seed, planner_horizon, planner_beam)
     max_steps = env_kwargs["max_steps"]
     expert = (expert + [0] * max_steps)[:max_steps]
+    expert_result = evaluate_sequence(env_kwargs, level_seed, seed, expert)
+    if env_kwargs.get("backend") == "gym_super_mario_bros" and not expert_result["success"]:
+        raise RuntimeError(
+            "Gym Super Mario Bros candidate experiment needs a successful warm-start candidate, "
+            "but the current scripted expert failed. Use a checkpoint/candidate bank with measured p0 > 0, "
+            "or run the publishable LibrePlatformer / Mario AI Framework backend."
+        )
     candidates: list[list[int]] = [expert, [0] * max_steps, [5] * max_steps]
     while len(candidates) < K:
         if rng.random() < 0.7:
@@ -67,8 +75,16 @@ def generate_candidate_bank(
         else:
             seq = rng.integers(0, N_ACTIONS, size=max_steps).astype(int).tolist()
         candidates.append(seq)
-    rows = []
-    for i, seq in enumerate(candidates[:K]):
+    rows = [
+        {
+            "candidate_id": 0,
+            "success": expert_result["success"],
+            "distance": expert_result["distance"],
+            "death": expert_result["death"],
+            "actions": " ".join(map(str, expert)),
+        }
+    ]
+    for i, seq in tqdm(enumerate(candidates[1:K], start=1), total=max(K - 1, 0), desc=f"candidate eval K={K}", leave=False):
         result = evaluate_sequence(env_kwargs, level_seed, seed + i, seq)
         rows.append({"candidate_id": i, "success": result["success"], "distance": result["distance"], "death": result["death"], "actions": " ".join(map(str, seq))})
     bank = pd.DataFrame(rows)
@@ -137,7 +153,7 @@ def run_candidate_suite(
             fieldnames=["K", "beta", "eps_smooth", "target_p0", "candidate_id", "success", "initial_weight", "n", "weight", "p", "q"],
         )
         writer.writeheader()
-        for K in candidate_bank_sizes:
+        for K in tqdm(candidate_bank_sizes, desc="candidate bank sizes"):
             bank = generate_candidate_bank(K, env_kwargs, level_seed, seed + K, mutation_rates, planner_horizon, planner_beam)
             bank.to_csv(csv_dir / f"candidate_bank_K{K}.csv", index=False)
             success = bank["success"].to_numpy(dtype=int)

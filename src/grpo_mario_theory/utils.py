@@ -39,11 +39,19 @@ def load_config(path: str | Path) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def section(cfg: dict[str, Any], name: str, quick: bool) -> dict[str, Any]:
-    """Return a config section with quick overrides applied."""
-    out = {k: v for k, v in cfg[name].items() if k != "quick"}
-    if quick:
-        out.update(cfg[name].get("quick", {}))
+def resolve_profile(profile: bool | str) -> str:
+    profile = "quick" if profile is True else ("full" if profile is False else str(profile))
+    if profile not in ("quick", "medium", "full"):
+        raise ValueError(f"Unknown profile: {profile}")
+    return profile
+
+
+def section(cfg: dict[str, Any], name: str, profile: bool | str) -> dict[str, Any]:
+    """Return a config section with quick/medium overrides applied."""
+    profile = resolve_profile(profile)
+    out = {k: v for k, v in cfg[name].items() if k not in ("quick", "medium")}
+    if profile in ("quick", "medium"):
+        out.update(cfg[name].get(profile, {}))
     return out
 
 
@@ -66,8 +74,8 @@ def save_run_config(cfg: dict[str, Any], outdir: str | Path) -> None:
         yaml.safe_dump(cfg, f, sort_keys=False)
 
 
-def platformer_kwargs(cfg: dict[str, Any], quick: bool) -> dict[str, Any]:
-    s = section(cfg, "platformer", quick)
+def platformer_kwargs(cfg: dict[str, Any], profile: bool | str) -> dict[str, Any]:
+    s = section(cfg, "platformer", profile)
     keys = [
         "backend",
         "height",
@@ -78,6 +86,10 @@ def platformer_kwargs(cfg: dict[str, Any], quick: bool) -> dict[str, Any]:
         "obs_w",
         "infinite_tux_dir",
         "mario_ai_dir",
+        "mario_ai_level_set",
+        "gym_mario_env_id",
+        "gym_mario_stages",
+        "gym_mario_movement",
         "java_cmd",
         "javac_cmd",
         "level_type",
