@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
 import pandas as pd
@@ -14,11 +15,11 @@ from .policy import CNNFeaturePolicy, clone_policy, load_policy, save_policy
 from .utils import binomial_ci, save_dual, seed_all
 
 
-def run_suite(cfg: dict, env_names: list[str], outdir: str | Path, profile: str, seed: int, device: str) -> None:
+def run_suite(cfg: dict, env_names: list[str], outdir: str | Path, profile: str, seed: int, device: str, num_workers: int = 0) -> None:
     for env_name in env_names:
         paths = _paths(outdir, env_name)
         hist, targets = pretrain(cfg, env_name, paths, profile, seed, device)
-        grpo = run_grpo(cfg, env_name, paths, profile, seed, device, targets)
+        grpo = run_grpo(cfg, env_name, paths, profile, seed, device, targets, num_workers)
         _plot(hist, grpo, paths["figures"])
 
 
@@ -122,7 +123,11 @@ def train_pg(policy, trajs, updates: int, lr: float, gamma: float, entropy_coef:
         opt.step()
 
 
-def evaluate(env_name: str, cfg: dict, policy, levels, seed: int, device: str, deterministic: bool):
+def evaluate(env_name: str, cfg: dict, policy, levels, seed: int, device: str, deterministic: bool, num_workers: int = 0):
+    if num_workers > 1:
+        jobs = [{"level": int(level), "seed": seed + i, "deterministic": deterministic, "prompt": -1} for i, level in enumerate(levels)]
+        rows = _parallel_rollouts(env_name, cfg, policy, jobs, need_traj=False, num_workers=num_workers)
+        return _metrics(rows)
     task, rows = make_task(env_name, cfg), []
     try:
         for i, level in enumerate(levels):
@@ -135,6 +140,10 @@ def evaluate(env_name: str, cfg: dict, policy, levels, seed: int, device: str, d
             rows.append({"level_seed": level, "success": float(info["success"]), "episode_length": actions, **info})
     finally:
         task.close()
+    return _metrics(rows)
+
+
+def _metrics(rows):
     s = np.array([r["success"] for r in rows], dtype=float)
     return {"p0": float(s.mean()), "success_rate": float(s.mean()), "q_eval": float(1 - s.mean()), "avg_distance": float(np.mean([r["distance"] for r in rows])), "mean_episode_length": float(np.mean([r["episode_length"] for r in rows]))}
 
@@ -152,7 +161,7 @@ def write_targets(hist: pd.DataFrame, targets, checkpoint_dir: Path, csv_dir: Pa
     return out
 
 
-def run_grpo(cfg, env_name: str, paths: dict[str, Path], profile: str, seed: int, device: str, targets: pd.DataFrame):
+def run_grpo(cfg, env_name: str, paths: dict[str, Path], profile: str, seed: int, device: str, targets: pd.DataFrame, num_workers: int = 0):
     s = _section(cfg, "grpo", profile)
     specs = targets[targets["met"]].to_dict("records")
     rows = []
@@ -161,23 +170,23 @@ def run_grpo(cfg, env_name: str, paths: dict[str, Path], profile: str, seed: int
             for G in s["Gs"]:
                 for beta in s["betas"]:
                     for si in range(int(s["seeds"])):
-                        rows.extend(grpo_setting(cfg, env_name, spec, float(eps), int(G), float(beta), seed + 10_000 * si, s, paths, device))
+                        rows.extend(grpo_setting(cfg, env_name, spec, float(eps), int(G), float(beta), seed + 10_000 * si, s, paths, device, num_workers))
     df = pd.DataFrame(rows)
     df.to_csv(paths["csv"] / "grpo_eval.csv", index=False)
     return df
 
 
-def grpo_setting(cfg, env_name: str, spec: dict, eps: float, G: int, beta: float, seed: int, s: dict, paths: dict[str, Path], device: str):
+def grpo_setting(cfg, env_name: str, spec: dict, eps: float, G: int, beta: float, seed: int, s: dict, paths: dict[str, Path], device: str, num_workers: int = 0):
     policy = load_policy(spec["checkpoint_path"], device=device, freeze_backbone=True)
-    rows, last = [], {"skipped_group_fraction": 0.0, "batch_success_rate": np.nan, "train_steps": 0, "inner_epochs": 0, "inner_converged": np.nan, "inner_initial_loss": np.nan, "inner_final_loss": np.nan}
+    rows, last = [], {"skipped_group_fraction": 0.0, "zero_adv_group_fraction": 0.0, "batch_success_rate": np.nan, "train_steps": 0, "inner_epochs": 0, "inner_converged": np.nan, "inner_initial_loss": np.nan, "inner_final_loss": np.nan}
     eval_levels = list(range(20000, 20000 + int(s["eval_rollouts"])))
     for it in tqdm(range(int(s["iterations"]) + 1), desc=f"{env_name} GRPO {spec['label']} eps={eps:g} G={G}", leave=False):
-        metrics = evaluate(env_name, cfg, policy, eval_levels, seed + 1000 * it, device, deterministic=False)
+        metrics = evaluate(env_name, cfg, policy, eval_levels, seed + 1000 * it, device, deterministic=False, num_workers=num_workers)
         lo, hi = binomial_ci(metrics["success_rate"], len(eval_levels))
         rows.append({"env": env_name, "warmstart": spec["label"], "warmstart_p0": spec["achieved_p0"], "eps_smooth": eps, "G": G, "beta": beta, "seed": seed, "iteration": it, "p": metrics["success_rate"], "q": metrics["q_eval"], "success_rate": metrics["success_rate"], "ci_low": lo, "ci_high": hi, **last})
         if it == int(s["iterations"]):
             break
-        batch, batch_stats = collect_grpo_batch(cfg, env_name, policy, G, beta, eps, seed + it, int(s["prompts"]), device)
+        batch, batch_stats = collect_grpo_batch(cfg, env_name, policy, G, beta, eps, seed + it, int(s["prompts"]), device, num_workers)
         inner_stats = update_grpo(
             policy,
             clone_policy(policy).to(device),
@@ -194,36 +203,36 @@ def grpo_setting(cfg, env_name: str, spec: dict, eps: float, G: int, beta: float
     return rows
 
 
-def collect_grpo_batch(cfg, env_name: str, policy, G: int, beta: float, eps: float, seed: int, prompts: int, device: str):
-    task = make_task(env_name, cfg)
-    obs_rows, action_rows, adv_rows, rewards_all, skipped = [], [], [], [], 0
-    try:
-        for i in range(prompts):
-            trajs = []
-            for g in range(G):
-                obs = task.reset(seed + 1000 * i + g, 30000 + i)
-                done = False
-                tr = {"obs": [], "actions": [], "success": 0.0}
-                while not done:
-                    action = policy.act(obs, deterministic=False, device=device)[0]
-                    tr["obs"].append(obs)
-                    tr["actions"].append(action)
-                    obs, _reward, done, info = task.step(action)
-                    tr["success"] = float(info["success"])
-                trajs.append(tr)
-            rewards = np.asarray([t["success"] for t in trajs], dtype=float)
-            rewards_all.extend(rewards.tolist())
-            p_hat = float(rewards.mean())
-            sigma = float(np.sqrt(p_hat * (1 - p_hat) + eps))
-            if (eps == 0.0 and p_hat in (0.0, 1.0)) or sigma == 0.0:
-                skipped += 1
-                continue
-            for tr, adv in zip(trajs, (rewards - p_hat) / (beta * sigma)):
-                obs_rows.append(np.asarray(tr["obs"], np.float32))
-                action_rows.append(np.asarray(tr["actions"], np.int64))
-                adv_rows.append(np.full(len(tr["actions"]), adv, dtype=np.float32))
-    finally:
-        task.close()
+def collect_grpo_batch(cfg, env_name: str, policy, G: int, beta: float, eps: float, seed: int, prompts: int, device: str, num_workers: int = 0):
+    if num_workers > 1:
+        jobs = [{"prompt": i, "level": 30000 + i, "seed": seed + 1000 * i + g, "deterministic": False} for i in range(prompts) for g in range(G)]
+        rollouts = _parallel_rollouts(env_name, cfg, policy, jobs, need_traj=True, num_workers=num_workers)
+    else:
+        task, rollouts = make_task(env_name, cfg), []
+        try:
+            for i in range(prompts):
+                for g in range(G):
+                    rollouts.append(_rollout(task, policy, 30000 + i, seed + 1000 * i + g, False, device, True, i))
+        finally:
+            task.close()
+    obs_rows, action_rows, adv_rows, rewards_all, skipped, zero_adv = [], [], [], [], 0, 0
+    for i in range(prompts):
+        trajs = [r for r in rollouts if r["prompt"] == i]
+        rewards = np.asarray([t["success"] for t in trajs], dtype=float)
+        rewards_all.extend(rewards.tolist())
+        p_hat = float(rewards.mean())
+        sigma = float(np.sqrt(p_hat * (1 - p_hat) + eps))
+        if (eps == 0.0 and p_hat in (0.0, 1.0)) or sigma == 0.0:
+            skipped += 1
+            continue
+        advs = (rewards - p_hat) / (beta * sigma)
+        if np.allclose(advs, 0.0):
+            zero_adv += 1
+            continue
+        for tr, adv in zip(trajs, advs):
+            obs_rows.append(np.asarray(tr["obs"], np.float32))
+            action_rows.append(np.asarray(tr["actions"], np.int64))
+            adv_rows.append(np.full(len(tr["actions"]), adv, dtype=np.float32))
     if not obs_rows:
         task = make_task(env_name, cfg)
         obs_dim = task.obs_dim
@@ -231,7 +240,60 @@ def collect_grpo_batch(cfg, env_name: str, policy, G: int, beta: float, eps: flo
         batch = {"obs": np.empty((0, obs_dim), np.float32), "actions": np.empty(0, np.int64), "adv": np.empty(0, np.float32)}
     else:
         batch = {"obs": np.concatenate(obs_rows), "actions": np.concatenate(action_rows), "adv": np.concatenate(adv_rows)}
-    return batch, {"skipped_group_fraction": skipped / max(1, prompts), "batch_success_rate": float(np.mean(rewards_all)) if rewards_all else np.nan, "train_steps": int(len(batch["actions"]))}
+    return batch, {"skipped_group_fraction": skipped / max(1, prompts), "zero_adv_group_fraction": zero_adv / max(1, prompts), "batch_success_rate": float(np.mean(rewards_all)) if rewards_all else np.nan, "train_steps": int(len(batch["actions"]))}
+
+
+def _parallel_rollouts(env_name: str, cfg: dict, policy, jobs: list[dict], need_traj: bool, num_workers: int):
+    chunks = [jobs[i::num_workers] for i in range(num_workers) if jobs[i::num_workers]]
+    payload = _policy_payload(policy)
+    args = [(env_name, cfg, payload, chunk, need_traj) for chunk in chunks]
+    with ProcessPoolExecutor(max_workers=num_workers) as pool:
+        return [row for chunk_rows in pool.map(_rollout_chunk, args) for row in chunk_rows]
+
+
+def _rollout_chunk(args):
+    env_name, cfg, payload, jobs, need_traj = args
+    task, policy = make_task(env_name, cfg), _policy_from_payload(payload, "cpu")
+    try:
+        return [_rollout(task, policy, j["level"], j["seed"], j["deterministic"], "cpu", need_traj, j["prompt"]) for j in jobs]
+    finally:
+        task.close()
+
+
+def _rollout(task, policy, level: int, seed: int, deterministic: bool, device: str, need_traj: bool, prompt: int):
+    seed_all(int(seed))
+    obs = task.reset(seed, level)
+    done, actions = False, 0
+    tr = {"obs": [], "actions": []}
+    while not done:
+        action = policy.act(obs, deterministic=deterministic, device=device)[0]
+        if need_traj:
+            tr["obs"].append(obs)
+            tr["actions"].append(action)
+        obs, _reward, done, info = task.step(action)
+        actions += 1
+    row = {"prompt": prompt, "level_seed": level, "success": float(info["success"]), "episode_length": actions, **info}
+    if need_traj:
+        row["obs"] = np.asarray(tr["obs"], np.float32)
+        row["actions"] = np.asarray(tr["actions"], np.int64)
+    return row
+
+
+def _policy_payload(policy):
+    return {
+        "state_dict": {k: v.detach().cpu() for k, v in policy.state_dict().items()},
+        "obs_shape": policy.obs_shape,
+        "aux_dim": policy.aux_dim,
+        "feature_dim": policy.feature_dim,
+        "hidden_dim": policy.hidden_dim,
+        "n_actions": policy.n_actions,
+    }
+
+
+def _policy_from_payload(payload, device: str):
+    policy = CNNFeaturePolicy(tuple(payload["obs_shape"]), int(payload["feature_dim"]), int(payload["hidden_dim"]), int(payload["n_actions"]), int(payload["aux_dim"]))
+    policy.load_state_dict(payload["state_dict"])
+    return policy.to(device).eval()
 
 
 def update_grpo(policy, old_policy, batch, lr: float, max_epochs: int, min_epochs: int, tol: float, beta_kl: float, device: str):

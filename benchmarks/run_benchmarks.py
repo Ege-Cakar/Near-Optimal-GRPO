@@ -20,6 +20,7 @@ def main() -> None:
     p.add_argument("--device", default="cpu")
     p.add_argument("--quick", action="store_true")
     p.add_argument("--medium", action="store_true")
+    p.add_argument("--num-workers", type=int, default=0, help="Worker processes for benchmark evaluation and GRPO rollout collection.")
     p.add_argument("--env", action="append", dest="envs", help="Benchmark env to run; repeat or omit for config envs.")
     args = p.parse_args()
     if args.quick and args.medium:
@@ -35,7 +36,7 @@ def main() -> None:
 
     profile = "quick" if args.quick else ("medium" if args.medium else "full")
     envs = args.envs or (cfg.get("medium_envs", cfg["envs"]) if profile == "medium" else cfg["envs"])
-    run_suite(cfg, envs, outdir, profile=profile, seed=int(cfg.get("seed", 0)), device=resolve_device(args.device))
+    run_suite(cfg, envs, outdir, profile=profile, seed=int(cfg.get("seed", 0)), device=resolve_device(args.device), num_workers=max(0, int(args.num_workers)))
 
 
 if __name__ == "__main__":

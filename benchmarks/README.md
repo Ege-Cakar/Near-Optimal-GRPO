@@ -46,6 +46,14 @@ Medium mode skips the classic-control tasks and runs only the MiniGrid-style tas
 uv run python benchmarks/run_benchmarks.py --medium
 ```
 
+GRPO rollout/evaluation collection can use worker processes:
+
+```bash
+uv run python benchmarks/run_benchmarks.py --medium --num-workers 4
+```
+
+The environment rollouts run on CPU in workers. `--device mps` only moves the policy and KL inner solve to MPS; for MiniGrid-sized models CPU is often faster unless the inner solve dominates.
+
 ARM-safe individual runs:
 
 ```bash

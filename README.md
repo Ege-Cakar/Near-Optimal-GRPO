@@ -68,6 +68,12 @@ Medium mode skips the classic-control tasks and runs only MiniGrid-style tasks w
 uv run python benchmarks/run_benchmarks.py --medium
 ```
 
+Use worker processes for the rollout/evaluation side:
+
+```bash
+uv run python benchmarks/run_benchmarks.py --medium --num-workers 4
+```
+
 Procgen runs are still available from Linux/x86_64 or Rosetta x86_64:
 
 ```bash
