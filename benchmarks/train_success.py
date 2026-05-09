@@ -14,17 +14,17 @@ from .policy import CNNFeaturePolicy, clone_policy, load_policy, save_policy
 from .utils import binomial_ci, save_dual, seed_all
 
 
-def run_suite(cfg: dict, env_names: list[str], outdir: str | Path, quick: bool, seed: int, device: str) -> None:
+def run_suite(cfg: dict, env_names: list[str], outdir: str | Path, profile: str, seed: int, device: str) -> None:
     for env_name in env_names:
         paths = _paths(outdir, env_name)
-        hist, targets = pretrain(cfg, env_name, paths, quick, seed, device)
-        grpo = run_grpo(cfg, env_name, paths, quick, seed, device, targets)
+        hist, targets = pretrain(cfg, env_name, paths, profile, seed, device)
+        grpo = run_grpo(cfg, env_name, paths, profile, seed, device, targets)
         _plot(hist, grpo, paths["figures"])
 
 
-def pretrain(cfg: dict, env_name: str, paths: dict[str, Path], quick: bool, seed: int, device: str):
+def pretrain(cfg: dict, env_name: str, paths: dict[str, Path], profile: str, seed: int, device: str):
     seed_all(seed)
-    s, psec = _section(cfg, "pretrain", quick), cfg["policy"]
+    s, psec = _section(cfg, "pretrain", profile), cfg["policy"]
     train_levels = list(range(1000, 1000 + int(s["train_levels"])))
     eval_levels = list(range(20000, 20000 + int(s["eval_levels"])))
     pd.DataFrame([{"split": "train", "level_seed": x} for x in train_levels] + [{"split": "eval", "level_seed": x} for x in eval_levels]).to_csv(paths["csv"] / "level_sets.csv", index=False)
@@ -152,8 +152,8 @@ def write_targets(hist: pd.DataFrame, targets, checkpoint_dir: Path, csv_dir: Pa
     return out
 
 
-def run_grpo(cfg, env_name: str, paths: dict[str, Path], quick: bool, seed: int, device: str, targets: pd.DataFrame):
-    s = _section(cfg, "grpo", quick)
+def run_grpo(cfg, env_name: str, paths: dict[str, Path], profile: str, seed: int, device: str, targets: pd.DataFrame):
+    s = _section(cfg, "grpo", profile)
     specs = targets[targets["met"]].to_dict("records")
     rows = []
     for spec in specs:
@@ -169,7 +169,7 @@ def run_grpo(cfg, env_name: str, paths: dict[str, Path], quick: bool, seed: int,
 
 def grpo_setting(cfg, env_name: str, spec: dict, eps: float, G: int, beta: float, seed: int, s: dict, paths: dict[str, Path], device: str):
     policy = load_policy(spec["checkpoint_path"], device=device, freeze_backbone=True)
-    rows, last = [], {"skipped_group_fraction": 0.0, "batch_success_rate": np.nan, "train_steps": 0}
+    rows, last = [], {"skipped_group_fraction": 0.0, "batch_success_rate": np.nan, "train_steps": 0, "inner_epochs": 0, "inner_converged": np.nan, "inner_initial_loss": np.nan, "inner_final_loss": np.nan}
     eval_levels = list(range(20000, 20000 + int(s["eval_rollouts"])))
     for it in tqdm(range(int(s["iterations"]) + 1), desc=f"{env_name} GRPO {spec['label']} eps={eps:g} G={G}", leave=False):
         metrics = evaluate(env_name, cfg, policy, eval_levels, seed + 1000 * it, device, deterministic=False)
@@ -177,8 +177,19 @@ def grpo_setting(cfg, env_name: str, spec: dict, eps: float, G: int, beta: float
         rows.append({"env": env_name, "warmstart": spec["label"], "warmstart_p0": spec["achieved_p0"], "eps_smooth": eps, "G": G, "beta": beta, "seed": seed, "iteration": it, "p": metrics["success_rate"], "q": metrics["q_eval"], "success_rate": metrics["success_rate"], "ci_low": lo, "ci_high": hi, **last})
         if it == int(s["iterations"]):
             break
-        batch, last = collect_grpo_batch(cfg, env_name, policy, G, beta, eps, seed + it, int(s["prompts"]), device)
-        update_grpo(policy, clone_policy(policy).to(device), batch, float(s["lr"]), int(s["update_epochs"]), float(s["beta_kl"]), device)
+        batch, batch_stats = collect_grpo_batch(cfg, env_name, policy, G, beta, eps, seed + it, int(s["prompts"]), device)
+        inner_stats = update_grpo(
+            policy,
+            clone_policy(policy).to(device),
+            batch,
+            float(s["lr"]),
+            int(s["inner_max_epochs"]),
+            int(s["inner_min_epochs"]),
+            float(s["inner_tol"]),
+            float(s["beta_kl"]),
+            device,
+        )
+        last = {**batch_stats, **inner_stats}
     save_policy(policy, paths["checkpoints"] / f"grpo_{spec['label']}_eps{eps:g}_G{G}_beta{beta:g}_seed{seed}.pt", {"env": env_name, **spec})
     return rows
 
@@ -223,20 +234,41 @@ def collect_grpo_batch(cfg, env_name: str, policy, G: int, beta: float, eps: flo
     return batch, {"skipped_group_fraction": skipped / max(1, prompts), "batch_success_rate": float(np.mean(rewards_all)) if rewards_all else np.nan, "train_steps": int(len(batch["actions"]))}
 
 
-def update_grpo(policy, old_policy, batch, lr: float, epochs: int, beta_kl: float, device: str):
+def update_grpo(policy, old_policy, batch, lr: float, max_epochs: int, min_epochs: int, tol: float, beta_kl: float, device: str):
+    """Full-batch KL-GRPO inner solve against a fixed old policy."""
     if len(batch["actions"]) == 0:
-        return
-    loader = DataLoader(TensorDataset(torch.as_tensor(batch["obs"], dtype=torch.float32), torch.as_tensor(batch["actions"], dtype=torch.long), torch.as_tensor(batch["adv"], dtype=torch.float32)), batch_size=1024, shuffle=True)
+        return {"inner_epochs": 0, "inner_converged": np.nan, "inner_initial_loss": np.nan, "inner_final_loss": np.nan}
+    obs = torch.as_tensor(batch["obs"], dtype=torch.float32, device=device)
+    actions = torch.as_tensor(batch["actions"], dtype=torch.long, device=device)
+    adv = torch.as_tensor(batch["adv"], dtype=torch.float32, device=device)
+    values = torch.zeros((len(actions), int(policy.n_actions)), dtype=torch.float32, device=device)
+    values[torch.arange(len(actions), device=device), actions] = adv
+    for p in old_policy.parameters():
+        p.requires_grad_(False)
+    old_policy.eval()
+    policy.train()
     opt = torch.optim.Adam([p for p in policy.parameters() if p.requires_grad], lr=lr)
-    for _ in range(epochs):
-        for obs, actions, adv in loader:
-            obs, actions, adv = obs.to(device), actions.to(device), adv.to(device)
-            dist, old = Categorical(logits=policy(obs)), Categorical(logits=old_policy(obs).detach())
-            loss = -(adv * dist.log_prob(actions)).mean() + beta_kl * kl_divergence(dist, old).mean()
-            opt.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
-            opt.step()
+    initial = prev = float(_kl_grpo_loss(policy, old_policy, obs, values, beta_kl).detach().cpu())
+    converged, final = False, prev
+    for epoch in range(1, max_epochs + 1):
+        loss = _kl_grpo_loss(policy, old_policy, obs, values, beta_kl)
+        opt.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
+        opt.step()
+        final = float(_kl_grpo_loss(policy, old_policy, obs, values, beta_kl).detach().cpu())
+        if epoch >= min_epochs and abs(prev - final) <= tol * max(1.0, abs(prev)):
+            converged = True
+            break
+        prev = final
+    return {"inner_epochs": epoch, "inner_converged": converged, "inner_initial_loss": initial, "inner_final_loss": final}
+
+
+def _kl_grpo_loss(policy, old_policy, obs, action_values, beta_kl: float):
+    dist = Categorical(logits=policy(obs))
+    with torch.no_grad():
+        old = Categorical(logits=old_policy(obs))
+    return -(dist.probs * action_values).sum(dim=-1).mean() + beta_kl * kl_divergence(dist, old).mean()
 
 
 def _paths(outdir: str | Path, env_name: str):
@@ -247,10 +279,10 @@ def _paths(outdir: str | Path, env_name: str):
     return paths
 
 
-def _section(cfg: dict, name: str, quick: bool):
-    out = {k: v for k, v in cfg[name].items() if k != "quick"}
-    if quick:
-        out.update(cfg[name].get("quick", {}))
+def _section(cfg: dict, name: str, profile: str):
+    out = {k: v for k, v in cfg[name].items() if k not in ("quick", "medium")}
+    if profile in ("quick", "medium"):
+        out.update(cfg[name].get(profile, {}))
     return out
 
 

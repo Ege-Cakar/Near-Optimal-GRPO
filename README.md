@@ -62,6 +62,12 @@ uv run python benchmarks/run_benchmarks.py --quick
 
 This runs `minigrid_empty`, `minigrid_lavagap`, `minigrid_doorkey`, `gym_cartpole`, `gym_mountaincar`, and `gym_acrobot`, writing to `results/benchmarks/<env>/...`. MiniGrid tasks use exact planners on fully observable grid images for warm-start data. The Gymnasium classic-control tasks use binary success labels and simple scripted warm-start controllers; GRPO still only sees per-rollout binary success.
 
+Medium mode skips the classic-control tasks and runs only MiniGrid-style tasks with a more thorough KL-GRPO inner solve:
+
+```bash
+uv run python benchmarks/run_benchmarks.py --medium
+```
+
 Procgen runs are still available from Linux/x86_64 or Rosetta x86_64:
 
 ```bash

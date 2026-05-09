@@ -1,6 +1,7 @@
 seed: 0
 outdir: results/benchmarks
 envs: [minigrid_empty, minigrid_lavagap, minigrid_doorkey, gym_cartpole, gym_mountaincar, gym_acrobot]
+medium_envs: [minigrid_empty, minigrid_lavagap, minigrid_doorkey]
 
 policy:
   feature_dim: 128
@@ -31,6 +32,14 @@ pretrain:
     bc_epochs: 3
     rl_updates: 1
     require_target_p0: null
+  medium:
+    train_levels: 32
+    eval_levels: 32
+    iterations: 30
+    rollouts_per_iter: 24
+    bc_epochs: 3
+    rl_updates: 1
+    require_target_p0: null
 
 grpo:
   eps_smooths: [0.0, 1.0e-8, 1.0e-4, 1.0e-2]
@@ -41,8 +50,10 @@ grpo:
   prompts: 4
   eval_rollouts: 32
   lr: 5.0e-4
-  update_epochs: 1
   beta_kl: 0.02
+  inner_max_epochs: 1000
+  inner_min_epochs: 10
+  inner_tol: 1.0e-6
   quick:
     eps_smooths: [0.0, 1.0e-4]
     Gs: [8]
@@ -50,6 +61,19 @@ grpo:
     iterations: 3
     prompts: 2
     eval_rollouts: 8
+    inner_max_epochs: 200
+    inner_min_epochs: 3
+    inner_tol: 1.0e-4
+  medium:
+    eps_smooths: [0.0, 1.0e-8, 1.0e-4, 1.0e-2]
+    Gs: [8, 16, 32]
+    betas: [0.3, 1.0]
+    iterations: 8
+    prompts: 4
+    eval_rollouts: 32
+    inner_max_epochs: 1000
+    inner_min_epochs: 10
+    inner_tol: 1.0e-6
 
 tasks:
   minigrid_empty:

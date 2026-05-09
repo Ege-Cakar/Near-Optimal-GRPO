@@ -40,6 +40,12 @@ One ARM-safe command after setup:
 uv run python benchmarks/run_benchmarks.py --quick
 ```
 
+Medium mode skips the classic-control tasks and runs only the MiniGrid-style tasks:
+
+```bash
+uv run python benchmarks/run_benchmarks.py --medium
+```
+
 ARM-safe individual runs:
 
 ```bash
@@ -67,5 +73,13 @@ Outputs are under `results/benchmarks/<env>/csv`, `results/benchmarks/<env>/figu
 - `minigrid_empty`, `minigrid_lavagap`, `minigrid_doorkey`: exact BFS planners supply imitation data on fully observable MiniGrid grids, then GRPO freezes the CNN/MLP representation and updates only the final linear head.
 - `gym_cartpole`, `gym_mountaincar`, `gym_acrobot`: Gymnasium classic-control tasks with binary success labels. Simple scripted controllers supply warm-start imitation labels; GRPO still only uses per-rollout binary success.
 - `procgen_coinrun` and `procgen_jumper`: RGB Procgen observations with a small previous-action auxiliary vector. The warm-start stage uses policy-gradient updates plus a simple right/jump scripted controller when enabled in config.
+
+The GRPO update solves the bounded KL mirror objective
+
+```text
+maximize E_s[sum_a pi_theta(a|s) A_hat(s,a)] - beta_kl E_s[KL(pi_theta(.|s) || pi_old(.|s))].
+```
+
+Here `A_hat` is the sparse empirical action-advantage table from the sampled group rollouts. For theory checks, the benchmark code optimizes this inner KL-GRPO objective until a configured convergence tolerance or a max-epoch cap, rather than doing a single PPO-style minibatch pass.
 
 The Procgen controller is not an optimal expert. If a run does not reach the requested measured held-out `p0`, the script raises instead of pretending GRPO has a success signal to amplify.
