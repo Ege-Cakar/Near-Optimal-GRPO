@@ -38,7 +38,46 @@ Install the optional Gym Mario backend with:
 uv sync --extra gym-mario
 ```
 
-`--quick` is intended as a laptop smoke run. `--medium` is the default local evidence run: it keeps all main ablation axes but cuts the largest Cartesian products. In medium/full mode, `run_all.py` trains a neural feature map first, freezes it, saves measured-`p0` linear-head warm starts, and then runs GRPO from those checkpoints. `--full` uses the larger sweeps in `configs/default.yaml` and is better suited to a cluster. Long loops use progress bars for finite-group trajectories, candidate evaluation, representation pretraining, frozen-head warm starts, and GRPO settings/iterations.
+Install the auxiliary Procgen/MiniGrid benchmark dependencies with:
+
+```bash
+uv sync --extra benchmarks
+```
+
+On Linux/x86_64 or an x86_64/Rosetta Python, install Procgen too:
+
+```bash
+uv sync --extra benchmarks --extra procgen
+```
+
+`--quick` is intended as a laptop smoke run. `--medium` is the default local evidence run: it keeps all main ablation axes but cuts the largest Cartesian products. In medium/full mode, `run_all.py` trains a CNN feature map first, freezes it, saves measured-`p0` linear-head warm starts, and then runs GRPO from those checkpoints. `--full` uses the larger sweeps in `configs/default.yaml` and is better suited to a cluster. Long loops use progress bars for finite-group trajectories, candidate evaluation, representation pretraining, frozen-head warm starts, and GRPO settings/iterations.
+
+When `run_all.py` is launched with `--env-backend gym_super_mario_bros`, the scalar and finite-group experiments are unchanged, the finite candidate-bank experiment stays on `LibrePlatformer`, and the learned-policy warm-start/GRPO stages use Gym pixels.
+
+For cleaner procedural benchmarks outside Mario, use:
+
+```bash
+uv run python benchmarks/run_benchmarks.py --quick --env minigrid_doorkey
+uv run python benchmarks/run_benchmarks.py --quick --env procgen_coinrun
+uv run python benchmarks/run_benchmarks.py --quick --env procgen_jumper
+```
+
+These write to `results/benchmarks/<env>/...`. MiniGrid DoorKey uses an exact planner on fully observable grid images for warm-start data. Procgen CoinRun/Jumper use RGB observations plus policy-gradient warm-starting and an optional scripted right/jump controller; if measured held-out `p0` does not reach the configured target, the run raises instead of launching GRPO without successes in support.
+
+Native Apple Silicon note: `procgen==0.10.7` does not ship a macOS arm64 wheel/source distribution, so use MiniGrid locally or run Procgen on a Linux/x86_64 cluster environment.
+
+Rosetta is also viable if you use a separate x86_64 Python environment:
+
+```bash
+arch -x86_64 zsh
+python3 -m venv .venv-procgen-x86
+source .venv-procgen-x86/bin/activate
+pip install -U pip uv
+uv sync --active --extra benchmarks --extra procgen
+uv run --active python benchmarks/run_benchmarks.py --quick --env procgen_coinrun
+```
+
+Atari/ALE environments such as Donkey Kong or Mario Bros are mature private sanity-check targets, but they require separately handled ROM/license acceptance and are less aligned with the publishable no-proprietary-assets path than Procgen, MiniGrid, or LibrePlatformer.
 
 ## Experiments
 
@@ -138,6 +177,14 @@ uv run python scripts/run_bc_pretrain.py --quick --env-backend infinite_tux
 uv run python scripts/run_grpo_finetune.py --quick --env-backend infinite_tux
 ```
 
+For private runs against the Gym/NES RandomStages backend:
+
+```bash
+uv sync --extra gym-mario
+uv run python scripts/run_representation_pretrain.py --medium --env-backend gym_super_mario_bros
+uv run python scripts/run_grpo_finetune.py --medium --env-backend gym_super_mario_bros --num-workers 4
+```
+
 For private runs against the Mario AI Framework with Mario assets:
 
 ```bash
@@ -155,7 +202,7 @@ uv sync --extra gym-mario
 uv run python -c "from grpo_mario_theory.gym_mario_env import GymSuperMarioBrosEnv; env=GymSuperMarioBrosEnv(max_steps=20); obs=env.reset(seed=0, level_seed=0); print(obs.shape); env.close()"
 ```
 
-This wrapper exposes compact features from downsampled NES frames plus game-state scalars. Those features can be used directly by the raw linear baseline or as input to the learned representation `phi_psi`. The current built-in scripted expert is only a smoke-test warm-start source and does not reliably solve original SMB random stages. For paper-quality GRPO amplification on this backend, use a warm-start checkpoint with measured held-out `p0 > 0`; otherwise the expected result is no binary-reward amplification because there are no successes in support.
+This wrapper exposes downsampled grayscale NES frames to the learned CNN representation. The current built-in scripted expert is only a smoke-test warm-start source and does not reliably solve original SMB random stages. For paper-quality GRPO amplification on this backend, use a warm-start checkpoint with measured held-out `p0 > 0`; otherwise the expected result is no binary-reward amplification because there are no successes in support.
 
 Outputs:
 
@@ -166,11 +213,14 @@ Outputs:
 
 ### 4. Representation Warm Starts
 
-The main learned-policy warm-start path first trains a small neural policy from scratch with imitation data plus optional shaped-reward pretraining. This is only to learn the feature map. It then freezes the representation `phi_psi(x)` and trains/evaluates only the final linear head `Omega`, so the GRPO policy class is
+The main learned-policy warm-start path first trains a small CNN policy from pixel observations with imitation data plus optional shaped-reward pretraining. This is only to learn the feature map. It then freezes the representation `phi_psi(x)` and trains/evaluates only the final linear head `Omega`, so the GRPO policy class is
 
 ```text
 pi_Omega(a | x) = softmax(phi_psi(x)^T Omega).
 ```
+
+For `gym_super_mario_bros`, the wrapper returns an `84x84` grayscale NES frame by default plus a small auxiliary vector containing estimated velocity and the previous button state. For `mario_ai_private`, the bridge renders the Mario AI Framework world offscreen and returns an `84x84` grayscale frame plus simulator velocity, on-ground, and previous-button features. No lookahead or tile-summary features are appended on either backend.
+Gym RandomStages does not use expert-solved level filtering; it trains on fixed random stage seeds directly, using the heuristic only for optional imitation labels and shaped pretraining.
 
 The resulting checkpoints are selected by measured held-out success probability `p0`, not by the amount of pretraining. This is the quantity used in the theory and in the GRPO plots.
 By default, medium/full require a measured target with `p0 = 1.0`; if the warm-start stage does not reach that, it raises instead of silently launching GRPO from a zero-success checkpoint.
@@ -221,7 +271,7 @@ For the paper framing, the learned-policy experiments instantiate the tractable 
 Run after `results/csv/warmstart_targets.csv` exists:
 
 ```bash
-uv run python scripts/run_grpo_finetune.py --medium --env-backend mario_ai_private --num-workers 4
+uv run python scripts/run_grpo_finetune.py --medium --env-backend gym_super_mario_bros --num-workers 4
 ```
 
 Outputs:
@@ -250,6 +300,12 @@ Private Mario AI Framework medium run:
 
 ```bash
 uv run python scripts/run_all.py --medium --env-backend mario_ai_private --num-workers 4
+```
+
+Private Gym/NES medium run:
+
+```bash
+uv run python scripts/run_all.py --medium --env-backend gym_super_mario_bros --num-workers 4
 ```
 
 Full configured run:

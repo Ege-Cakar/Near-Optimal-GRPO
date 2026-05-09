@@ -20,6 +20,14 @@ gym-mario = [
     "gym-super-mario-bros==7.4.0",
     "nes-py==8.2.1",
 ]
+benchmarks = [
+    "gymnasium>=0.29",
+    "minigrid>=2.3",
+]
+procgen = [
+    "gym==0.25.2",
+    "procgen>=0.10.7",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

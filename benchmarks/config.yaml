@@ -1,0 +1,72 @@
+seed: 0
+outdir: results/benchmarks
+envs: [procgen_coinrun, procgen_jumper, minigrid_doorkey]
+
+policy:
+  feature_dim: 128
+  hidden_dim: 256
+
+pretrain:
+  target_p0s: [0.0, 0.25, 0.5, 0.75, 1.0]
+  require_target_p0: 1.0
+  train_levels: 64
+  eval_levels: 32
+  iterations: 80
+  rollouts_per_iter: 32
+  bc_epochs: 2
+  rl_updates: 2
+  batch_size: 512
+  bc_lr: 2.0e-3
+  rl_lr: 1.0e-3
+  gamma: 0.99
+  entropy_coef: 0.01
+  expert_prob_start: 1.0
+  expert_prob_end: 0.0
+  max_dataset: 200000
+  quick:
+    train_levels: 8
+    eval_levels: 8
+    iterations: 6
+    rollouts_per_iter: 8
+    bc_epochs: 3
+    rl_updates: 1
+    require_target_p0: null
+
+grpo:
+  eps_smooths: [0.0, 1.0e-8, 1.0e-4, 1.0e-2]
+  Gs: [16, 32]
+  betas: [0.3, 1.0]
+  seeds: 1
+  iterations: 12
+  prompts: 4
+  eval_rollouts: 32
+  lr: 5.0e-4
+  update_epochs: 1
+  beta_kl: 0.02
+  quick:
+    eps_smooths: [0.0, 1.0e-4]
+    Gs: [8]
+    betas: [1.0]
+    iterations: 3
+    prompts: 2
+    eval_rollouts: 8
+
+tasks:
+  procgen_coinrun:
+    kind: procgen
+    env_name: coinrun
+    distribution_mode: easy
+    max_steps: 1000
+    scripted_expert: true
+  procgen_jumper:
+    kind: procgen
+    env_name: jumper
+    distribution_mode: easy
+    max_steps: 1000
+    scripted_expert: true
+  minigrid_doorkey:
+    kind: minigrid
+    env_id: MiniGrid-DoorKey-8x8-v0
+    max_steps: 256
+    fully_observable: true
+    obs_size: 8

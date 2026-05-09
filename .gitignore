@@ -9,6 +9,7 @@ results/checkpoints/*
 results/csv/*
 results/datasets/*
 results/figures/*
+results/benchmarks/*
 !results/checkpoints/.gitkeep
 !results/csv/.gitkeep
 !results/datasets/.gitkeep
