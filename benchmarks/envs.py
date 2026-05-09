@@ -13,6 +13,8 @@ def make_task(name: str, cfg: dict):
         return ProcgenTask(name, **kwargs)
     if spec["kind"] == "minigrid":
         return MiniGridTask(name, **kwargs)
+    if spec["kind"] == "gymnasium":
+        return GymnasiumTask(name, **kwargs)
     raise ValueError(f"Unknown benchmark kind: {spec['kind']}")
 
 
@@ -201,6 +203,109 @@ class MiniGridTask:
         return _door_open(self.env.unwrapped.grid, door) if door is not None else False
 
 
+class GymnasiumTask:
+    def __init__(self, name: str, env_id: str, max_steps: int, success: str, expert: str | None = None, reward_shift: float = 0.0):
+        self.name, self.env_id, self.max_steps, self.success_rule = name, env_id, int(max_steps), success
+        self.expert, self.reward_shift = expert, float(reward_shift)
+        self.env, self.elapsed, self.prev_action, self.success, self.raw_obs = None, 0, -1, False, None
+
+    @property
+    def obs_shape(self) -> tuple[int, int, int]:
+        return (self._obs_base_dim(), 1, 1)
+
+    @property
+    def aux_dim(self) -> int:
+        return self.n_actions
+
+    @property
+    def obs_dim(self) -> int:
+        return int(np.prod(self.obs_shape)) + self.aux_dim
+
+    @property
+    def n_actions(self) -> int:
+        self._ensure_env()
+        return int(self.env.action_space.n)
+
+    def reset(self, seed: int, level_seed: int):
+        self._ensure_env()
+        self.raw_obs, _info = self.env.reset(seed=int(level_seed))
+        self.elapsed, self.prev_action, self.success = 0, -1, False
+        return self._obs()
+
+    def step(self, action: int):
+        self.raw_obs, reward, terminated, truncated, _info = self.env.step(int(action))
+        self.elapsed += 1
+        self.prev_action = int(action)
+        self.success = self.success or self._success(bool(terminated), float(reward))
+        done = bool(terminated or truncated) or self.elapsed >= self.max_steps
+        return self._obs(), float(reward) + self.reward_shift, done, self.info()
+
+    def info(self) -> dict:
+        return {"success": self.success, "distance": float(self.success), "death": False, "timeout": self.elapsed >= self.max_steps and not self.success, "time_to_goal": self.elapsed if self.success else np.nan}
+
+    def expert_action(self):
+        if self.expert == "cartpole":
+            _x, _xdot, theta, thetadot = np.asarray(self.raw_obs, dtype=float)
+            return int(theta + 0.25 * thetadot > 0.0)
+        if self.expert == "mountaincar":
+            _pos, vel = np.asarray(self.raw_obs, dtype=float)
+            return 2 if vel >= 0 else 0
+        if self.expert == "acrobot":
+            obs = np.asarray(self.raw_obs, dtype=float)
+            return 2 if obs[4] + obs[5] >= 0 else 0
+        return None
+
+    def close(self):
+        if self.env is not None:
+            self.env.close()
+            self.env = None
+
+    def _ensure_env(self):
+        if self.env is not None:
+            return
+        try:
+            import gymnasium as gym
+        except ImportError as e:
+            raise RuntimeError("Install with `uv sync --extra benchmarks` to use Gymnasium tasks.") from e
+        self.env = gym.make(self.env_id, max_episode_steps=self.max_steps)
+        if not hasattr(self.env.action_space, "n"):
+            raise ValueError(f"{self.env_id} must have a discrete action space.")
+
+    def _obs_base_dim(self) -> int:
+        self._ensure_env()
+        space = self.env.observation_space
+        return int(space.n if hasattr(space, "n") else np.prod(space.shape))
+
+    def _obs(self):
+        space = self.env.observation_space
+        if hasattr(space, "n"):
+            x = np.zeros(int(space.n), dtype=np.float32)
+            x[int(self.raw_obs)] = 1.0
+        else:
+            x = np.asarray(self.raw_obs, dtype=np.float32).ravel()
+            high = np.where(np.isfinite(space.high.ravel()), space.high.ravel(), 10.0)
+            low = np.where(np.isfinite(space.low.ravel()), space.low.ravel(), -10.0)
+            x = np.clip(2.0 * (x - low) / np.maximum(high - low, 1e-6) - 1.0, -5.0, 5.0)
+        prev = np.zeros(self.n_actions, dtype=np.float32)
+        if 0 <= self.prev_action < self.n_actions:
+            prev[self.prev_action] = 1.0
+        return np.concatenate([x.astype(np.float32), prev]).astype(np.float32)
+
+    def _success(self, terminated: bool, reward: float) -> bool:
+        x = np.asarray(self.raw_obs, dtype=float).ravel()
+        if self.success_rule == "cartpole":
+            return self.elapsed >= self.max_steps - 25 and not terminated
+        if self.success_rule == "mountaincar":
+            return bool(x[0] >= 0.5)
+        if self.success_rule == "acrobot":
+            return terminated and self.elapsed < self.max_steps
+        if self.success_rule == "positive_reward":
+            return reward > 0.0
+        if self.success_rule == "terminated":
+            return terminated
+        raise ValueError(f"Unknown success rule: {self.success_rule}")
+
+
 def _resize_mean(x: np.ndarray, h: int, w: int) -> np.ndarray:
     rows = np.array_split(x, h, axis=0)
     return np.array([[c.mean(axis=(0, 1)) for c in np.array_split(r, w, axis=1)] for r in rows], dtype=np.float32)
@@ -210,9 +315,9 @@ def _minigrid_plan(env) -> list[int]:
     grid, start, start_dir = env.grid, tuple(env.agent_pos), int(env.agent_dir)
     has_key = bool(getattr(env, "carrying", None) is not None and env.carrying.type == "key")
     key, door, goal = _find(grid, "key"), _find(grid, "door"), _find(grid, "goal")
-    if (key is None and not has_key) or door is None or goal is None:
+    if goal is None:
         return []
-    start_state = (start[0], start[1], start_dir, has_key, _door_open(grid, door))
+    start_state = (start[0], start[1], start_dir, has_key, _door_open(grid, door) if door else True)
     seen, q = {start_state}, [(start_state, [])]
     while q:
         (x, y, d, has_key, door_open), path = q.pop(0)
@@ -233,7 +338,7 @@ def _minigrid_next(grid, state, key, door):
     front = (fx, fy)
     if key is not None and front == key and not has_key:
         yield 3, (x, y, d, True, door_open)
-    if front == door and has_key and not door_open:
+    if door is not None and front == door and has_key and not door_open:
         yield 5, (x, y, d, has_key, True)
     if _passable(grid, front, door, door_open):
         yield 2, (fx, fy, d, has_key, door_open)
@@ -249,6 +354,8 @@ def _find(grid, typ: str):
 
 
 def _door_open(grid, door) -> bool:
+    if door is None:
+        return True
     obj = grid.get(*door)
     return bool(obj and getattr(obj, "is_open", False))
 

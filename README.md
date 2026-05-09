@@ -38,7 +38,7 @@ Install the optional Gym Mario backend with:
 uv sync --extra gym-mario
 ```
 
-Install the auxiliary Procgen/MiniGrid benchmark dependencies with:
+Install the auxiliary ARM-safe Gymnasium/MiniGrid benchmark dependencies with:
 
 ```bash
 uv sync --extra benchmarks
@@ -54,15 +54,20 @@ uv sync --extra benchmarks --extra procgen
 
 When `run_all.py` is launched with `--env-backend gym_super_mario_bros`, the scalar and finite-group experiments are unchanged, the finite candidate-bank experiment stays on `LibrePlatformer`, and the learned-policy warm-start/GRPO stages use Gym pixels.
 
-For cleaner procedural benchmarks outside Mario, use:
+For cleaner ARM-safe procedural/control benchmarks outside Mario, use one command:
 
 ```bash
-uv run python benchmarks/run_benchmarks.py --quick --env minigrid_doorkey
+uv run python benchmarks/run_benchmarks.py --quick
+```
+
+This runs `minigrid_empty`, `minigrid_lavagap`, `minigrid_doorkey`, `gym_cartpole`, `gym_mountaincar`, and `gym_acrobot`, writing to `results/benchmarks/<env>/...`. MiniGrid tasks use exact planners on fully observable grid images for warm-start data. The Gymnasium classic-control tasks use binary success labels and simple scripted warm-start controllers; GRPO still only sees per-rollout binary success.
+
+Procgen runs are still available from Linux/x86_64 or Rosetta x86_64:
+
+```bash
 uv run python benchmarks/run_benchmarks.py --quick --env procgen_coinrun
 uv run python benchmarks/run_benchmarks.py --quick --env procgen_jumper
 ```
-
-These write to `results/benchmarks/<env>/...`. MiniGrid DoorKey uses an exact planner on fully observable grid images for warm-start data. Procgen CoinRun/Jumper use RGB observations plus policy-gradient warm-starting and an optional scripted right/jump controller; if measured held-out `p0` does not reach the configured target, the run raises instead of launching GRPO without successes in support.
 
 Native Apple Silicon note: `procgen==0.10.7` does not ship a macOS arm64 wheel/source distribution, so use MiniGrid locally or run Procgen on a Linux/x86_64 cluster environment.
 

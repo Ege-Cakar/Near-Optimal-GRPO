@@ -1,6 +1,6 @@
 seed: 0
 outdir: results/benchmarks
-envs: [procgen_coinrun, procgen_jumper, minigrid_doorkey]
+envs: [minigrid_empty, minigrid_lavagap, minigrid_doorkey, gym_cartpole, gym_mountaincar, gym_acrobot]
 
 policy:
   feature_dim: 128
@@ -52,6 +52,44 @@ grpo:
     eval_rollouts: 8
 
 tasks:
+  minigrid_empty:
+    kind: minigrid
+    env_id: MiniGrid-Empty-8x8-v0
+    max_steps: 128
+    fully_observable: true
+    obs_size: 8
+  minigrid_lavagap:
+    kind: minigrid
+    env_id: MiniGrid-LavaGapS7-v0
+    max_steps: 128
+    fully_observable: true
+    obs_size: 7
+  minigrid_doorkey:
+    kind: minigrid
+    env_id: MiniGrid-DoorKey-8x8-v0
+    max_steps: 256
+    fully_observable: true
+    obs_size: 8
+  gym_cartpole:
+    kind: gymnasium
+    env_id: CartPole-v1
+    max_steps: 500
+    success: cartpole
+    expert: cartpole
+  gym_mountaincar:
+    kind: gymnasium
+    env_id: MountainCar-v0
+    max_steps: 200
+    success: mountaincar
+    expert: mountaincar
+    reward_shift: 1.0
+  gym_acrobot:
+    kind: gymnasium
+    env_id: Acrobot-v1
+    max_steps: 500
+    success: acrobot
+    expert: acrobot
+    reward_shift: 1.0
   procgen_coinrun:
     kind: procgen
     env_name: coinrun
@@ -64,9 +102,3 @@ tasks:
     distribution_mode: easy
     max_steps: 1000
     scripted_expert: true
-  minigrid_doorkey:
-    kind: minigrid
-    env_id: MiniGrid-DoorKey-8x8-v0
-    max_steps: 256
-    fully_observable: true
-    obs_size: 8

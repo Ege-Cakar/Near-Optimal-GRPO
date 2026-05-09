@@ -1,6 +1,6 @@
-# Auxiliary Procgen and MiniGrid Benchmarks
+# Auxiliary ARM-Safe Gymnasium, MiniGrid, and Procgen Benchmarks
 
-This folder is separate from the Mario platformer suite. It gives cleaner, actively used procedural benchmarks for the same warm-start amplification question.
+This folder is separate from the Mario platformer suite. It gives cleaner benchmarks for the same binary warm-start amplification question.
 
 ## Setup
 
@@ -14,7 +14,7 @@ For Procgen on Linux/x86_64 or an x86_64/Rosetta Python:
 uv sync --extra benchmarks --extra procgen
 ```
 
-`procgen==0.10.7` does not provide a native macOS arm64 distribution, so this checkout can still run MiniGrid locally on Apple Silicon while Procgen is better run on a Linux/x86_64 cluster.
+`procgen==0.10.7` does not provide a native macOS arm64 distribution, so the default config only uses ARM-safe Gymnasium/MiniGrid tasks. Run Procgen on Linux/x86_64 or a Rosetta x86_64 Python.
 
 ## Procgen Through Rosetta
 
@@ -34,8 +34,26 @@ uv run --active python benchmarks/run_benchmarks.py --quick --env procgen_coinru
 
 ## Run
 
+One ARM-safe command after setup:
+
 ```bash
+uv run python benchmarks/run_benchmarks.py --quick
+```
+
+ARM-safe individual runs:
+
+```bash
+uv run python benchmarks/run_benchmarks.py --quick --env minigrid_empty
+uv run python benchmarks/run_benchmarks.py --quick --env minigrid_lavagap
 uv run python benchmarks/run_benchmarks.py --quick --env minigrid_doorkey
+uv run python benchmarks/run_benchmarks.py --quick --env gym_cartpole
+uv run python benchmarks/run_benchmarks.py --quick --env gym_mountaincar
+uv run python benchmarks/run_benchmarks.py --quick --env gym_acrobot
+```
+
+Procgen-only runs from a Linux/x86_64 or Rosetta x86_64 environment:
+
+```bash
 uv run python benchmarks/run_benchmarks.py --quick --env procgen_coinrun
 uv run python benchmarks/run_benchmarks.py --quick --env procgen_jumper
 ```
@@ -46,7 +64,8 @@ Outputs are under `results/benchmarks/<env>/csv`, `results/benchmarks/<env>/figu
 
 ## What This Runs
 
-- `minigrid_doorkey`: exact BFS planner supplies imitation data on fully observable DoorKey grids by default, then GRPO freezes the CNN/MLP representation and updates only the final linear head.
+- `minigrid_empty`, `minigrid_lavagap`, `minigrid_doorkey`: exact BFS planners supply imitation data on fully observable MiniGrid grids, then GRPO freezes the CNN/MLP representation and updates only the final linear head.
+- `gym_cartpole`, `gym_mountaincar`, `gym_acrobot`: Gymnasium classic-control tasks with binary success labels. Simple scripted controllers supply warm-start imitation labels; GRPO still only uses per-rollout binary success.
 - `procgen_coinrun` and `procgen_jumper`: RGB Procgen observations with a small previous-action auxiliary vector. The warm-start stage uses policy-gradient updates plus a simple right/jump scripted controller when enabled in config.
 
 The Procgen controller is not an optimal expert. If a run does not reach the requested measured held-out `p0`, the script raises instead of pretending GRPO has a success signal to amplify.
